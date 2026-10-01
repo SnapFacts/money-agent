@@ -1,6 +1,9 @@
+```python
 import os
+import secrets
 
 from flask import Flask, redirect, request, session
+from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 
 from engine.tiktok_connector import TikTokConnector
 
@@ -8,6 +11,8 @@ from engine.tiktok_connector import TikTokConnector
 app = Flask(__name__)
 
 app.secret_key = os.environ["MONEY_AI_SECRET_KEY"]
+
+state_serializer = URLSafeTimedSerializer(app.secret_key)
 
 tiktok = TikTokConnector()
 
@@ -18,6 +23,7 @@ def home():
     <h1>MONEY AI</h1>
     <p>Backend is running.</p>
     <p><a href="/health">Health check</a></p>
+    <p><a href="/tiktok/login">Connect TikTok</a></p>
     """
 
 
@@ -32,9 +38,13 @@ def health():
 
 @app.get("/tiktok/login")
 def tiktok_login():
-    result = tiktok.create_authorization_url()
+    raw_state = secrets.token_urlsafe(32)
 
-    session["tiktok_oauth_state"] = result["state"]
+    state = state_serializer.dumps(raw_state)
+
+    session["tiktok_oauth_state"] = state
+
+    result = tiktok.create_authorization_url(state=state)
 
     return redirect(result["authorization_url"])
 
@@ -51,9 +61,21 @@ def tiktok_callback():
         }, 400
 
     state = request.args.get("state")
-    saved_state = session.get("tiktok_oauth_state")
 
-    if not state or state != saved_state:
+    if not state:
+        return {
+            "status": "error",
+            "message": "No OAuth state was returned.",
+        }, 400
+
+    try:
+        state_serializer.loads(state, max_age=600)
+    except SignatureExpired:
+        return {
+            "status": "error",
+            "message": "OAuth state expired. Please try again.",
+        }, 400
+    except BadSignature:
         return {
             "status": "error",
             "message": "Invalid OAuth state.",
@@ -103,3 +125,4 @@ if __name__ == "__main__":
         port=port,
         debug=False,
     )
+```
