@@ -49,13 +49,7 @@ class TikTokConnector:
 
         params = {
             "client_key": self.client_key,
-            "scope": (
-                "user.info.basic,"
-                "user.info.stats,"
-                "user.info.profile,"
-                "video.list,"
-                "video.upload"
-            ),
+            "scope": "user.info.basic",
             "response_type": "code",
             "redirect_uri": self.redirect_uri,
             "state": state,
