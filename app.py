@@ -1,7 +1,7 @@
-import os
+﻿import os
 import secrets
 
-from flask import Flask, redirect, request, session
+from flask import Flask, redirect, request, session, send_from_directory
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 
 from engine.tiktok_connector import TikTokConnector
@@ -14,6 +14,15 @@ app.secret_key = os.environ["MONEY_AI_SECRET_KEY"]
 state_serializer = URLSafeTimedSerializer(app.secret_key)
 
 tiktok = TikTokConnector()
+
+
+@app.get("/tiktokcM12XuTiIWdyAz7FnURIteP29vho3X9t.txt")
+def tiktok_verification_file():
+    return send_from_directory(
+        os.path.dirname(os.path.abspath(__file__)),
+        "tiktokcM12XuTiIWdyAz7FnURIteP29vho3X9t.txt",
+        mimetype="text/plain",
+    )
 
 
 @app.get("/")
