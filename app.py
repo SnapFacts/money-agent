@@ -1,4 +1,3 @@
-```python
 import os
 import secrets
 
@@ -39,7 +38,6 @@ def health():
 @app.get("/tiktok/login")
 def tiktok_login():
     raw_state = secrets.token_urlsafe(32)
-
     state = state_serializer.dumps(raw_state)
 
     session["tiktok_oauth_state"] = state
@@ -125,4 +123,3 @@ if __name__ == "__main__":
         port=port,
         debug=False,
     )
-```
