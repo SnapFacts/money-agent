@@ -58,7 +58,10 @@ input{
 
 .grid{
     display:grid;
-    grid-template-columns:repeat(auto-fit,minmax(260px,1fr));
+    grid-template-columns:repeat(
+        auto-fit,
+        minmax(260px,1fr)
+    );
     gap:16px
 }
 
@@ -125,6 +128,18 @@ video{
 #result{
     margin-top:16px
 }
+
+.loading{
+    color:#a8afbd;
+}
+
+.error{
+    color:#ff8d8d;
+}
+
+.success{
+    color:#9dffb0;
+}
 </style>
 </head>
 
@@ -135,32 +150,29 @@ video{
 <h1>MONEY AI</h1>
 
 <p class="small">
-Real trend → research → content → video pipeline.
+Real trend → research → content → video rendering.
 </p>
-
 
 <div class="grid">
 
 <div class="card">
 <h3>TikTok</h3>
 <p id="tiktok">Checking...</p>
-
 <a href="/tiktok/login">
 <button>Connect TikTok</button>
 </a>
 </div>
-
 
 <div class="card">
 <h3>AI</h3>
 <p id="ai">Checking...</p>
 </div>
 
-
 <div class="card">
 <h3>Pipeline</h3>
 <p>
-Real trend discovery, source-aware content generation and video rendering.
+Trend discovery, source-aware content generation,
+voice-over and vertical video rendering.
 </p>
 </div>
 
@@ -172,11 +184,11 @@ Real trend discovery, source-aware content generation and video rendering.
 <h2>🔥 Trending stories</h2>
 
 <p class="small">
-Choose a real story and MONEY AI will use its source when creating the video.
+Choose a real story and MONEY AI will create the video.
 </p>
 
 <div id="trends">
-Loading trends...
+<p class="loading">Loading trends...</p>
 </div>
 
 </div>
@@ -189,9 +201,9 @@ Loading trends...
 <input
     id="topic"
     placeholder="π.χ. Why AI is changing Wall Street jobs"
->
+/>
 
-<button onclick="generateManual()">
+<button id="manualButton">
 Generate Video
 </button>
 
@@ -205,7 +217,7 @@ Generate Video
 <h2>Recent jobs</h2>
 
 <div id="jobs">
-Loading...
+<p class="loading">Loading...</p>
 </div>
 
 </div>
@@ -215,225 +227,452 @@ Loading...
 
 <script>
 
-async function load(){
-
-    try{
-
-        const h = await fetch('/health').then(r => r.json());
-
-        document.getElementById('tiktok').textContent =
-            h.tiktok.ready
-            ? 'Configured'
-            : 'Not configured';
-
-        document.getElementById('ai').textContent =
-            h.ai_configured
-            ? 'OpenAI configured'
-            : 'Demo mode — no paid AI required';
+let trendsCache = [];
 
 
-        await loadTrends();
+/* ============================================================
+   BASIC HELPERS
+   ============================================================ */
 
-        await loadJobs();
+function escapeHtml(value){
 
-    }catch(error){
-
-        console.error(error);
-
-    }
-
+    return String(value || "")
+        .replace(/&/g,"&amp;")
+        .replace(/</g,"&lt;")
+        .replace(/>/g,"&gt;")
+        .replace(/"/g,"&quot;")
+        .replace(/'/g,"&#039;");
 }
 
 
-async function loadTrends(){
+function escapeAttribute(value){
+
+    return String(value || "")
+        .replace(/&/g,"&amp;")
+        .replace(/"/g,"&quot;")
+        .replace(/</g,"&lt;")
+        .replace(/>/g,"&gt;");
+}
+
+
+function setResult(message, type=""){
+
+    const result =
+        document.getElementById("result");
+
+    result.className = type;
+
+    result.textContent = message;
+}
+
+
+/* ============================================================
+   HEALTH
+   ============================================================ */
+
+async function loadHealth(){
 
     try{
 
         const response =
-            await fetch('/api/trends');
+            await fetch("/health");
+
+        if(!response.ok){
+            throw new Error(
+                "Health request failed"
+            );
+        }
+
+        const data =
+            await response.json();
+
+        document.getElementById("tiktok")
+            .textContent =
+            data.tiktok &&
+            data.tiktok.ready
+                ? "Configured"
+                : "Not configured";
+
+        document.getElementById("ai")
+            .textContent =
+            data.ai_configured
+                ? "OpenAI configured"
+                : "Demo mode — no paid AI required";
+
+    }catch(error){
+
+        console.error(
+            "Health error:",
+            error
+        );
+
+    }
+}
+
+
+/* ============================================================
+   TRENDS
+   ============================================================ */
+
+async function loadTrends(){
+
+    const container =
+        document.getElementById("trends");
+
+    try{
+
+        const response =
+            await fetch("/api/trends");
+
+        if(!response.ok){
+            throw new Error(
+                "Trend request failed"
+            );
+        }
 
         const trends =
             await response.json();
 
-        const container =
-            document.getElementById('trends');
+        trendsCache = Array.isArray(trends)
+            ? trends
+            : [];
 
-
-        if(!trends.length){
+        if(!trendsCache.length){
 
             container.innerHTML =
-                '<p>No trends found.</p>';
+                "<p>No trends found.</p>";
 
             return;
+        }
+
+
+        container.innerHTML =
+            trendsCache.map(
+                (trend,index) => {
+
+                    const title =
+                        escapeHtml(
+                            trend.title ||
+                            "Untitled story"
+                        );
+
+                    const source =
+                        escapeHtml(
+                            trend.source ||
+                            "Unknown source"
+                        );
+
+                    let date =
+                        "Date unavailable";
+
+                    if(trend.published_at){
+
+                        const parsed =
+                            new Date(
+                                trend.published_at
+                            );
+
+                        if(!Number.isNaN(
+                            parsed.getTime()
+                        )){
+                            date =
+                                parsed.toLocaleString();
+                        }
+                    }
+
+
+                    let sourceLink = "";
+
+                    if(trend.url){
+
+                        sourceLink =
+                            `
+                            <a
+                                class="source-link"
+                                href="${escapeAttribute(trend.url)}"
+                                target="_blank"
+                                rel="noopener noreferrer"
+                            >
+                                Read source
+                            </a>
+                            `;
+                    }
+
+
+                    return `
+                    <div class="trend">
+
+                        <div class="trend-title">
+                            ${index + 1}. ${title}
+                        </div>
+
+                        <div class="trend-meta">
+                            ${source}
+                            ·
+                            ${escapeHtml(date)}
+                            ${sourceLink}
+                        </div>
+
+                        <button
+                            class="create-trend-button"
+                            data-index="${index}"
+                        >
+                            Create Video
+                        </button>
+
+                    </div>
+                    `;
+
+                }
+            ).join("");
+
+
+        /*
+         * IMPORTANT:
+         * We attach the click handlers AFTER
+         * rendering the HTML.
+         *
+         * We do NOT put JSON inside onclick=""
+         * anymore.
+         */
+
+        document
+            .querySelectorAll(
+                ".create-trend-button"
+            )
+            .forEach(button => {
+
+                button.addEventListener(
+                    "click",
+                    async () => {
+
+                        const index =
+                            Number(
+                                button.dataset.index
+                            );
+
+                        const trend =
+                            trendsCache[index];
+
+                        await createFromTrend(
+                            trend,
+                            button
+                        );
+
+                    }
+                );
+
+            });
+
+    }catch(error){
+
+        console.error(
+            "Trend error:",
+            error
+        );
+
+        container.innerHTML =
+            `
+            <p class="error">
+                Could not load trends.
+            </p>
+            `;
+
+    }
+}
+
+
+/* ============================================================
+   CREATE FROM TREND
+   ============================================================ */
+
+async function createFromTrend(
+    trend,
+    button
+){
+
+    if(!trend || !trend.title){
+
+        alert(
+            "This trend has no title."
+        );
+
+        return;
+    }
+
+
+    if(button){
+
+        button.disabled = true;
+        button.textContent =
+            "Creating...";
+    }
+
+
+    setResult(
+        "Creating video from real trend..."
+    );
+
+
+    const payload = {
+
+        topic:
+            trend.title || "",
+
+        source_url:
+            trend.url || null,
+
+        source_name:
+            trend.source || null,
+
+        published_at:
+            trend.published_at || null
+
+    };
+
+
+    console.log(
+        "[MONEY AI] Sending generation request:",
+        payload
+    );
+
+
+    try{
+
+        const response =
+            await fetch(
+                "/api/generate",
+                {
+                    method:"POST",
+
+                    headers:{
+                        "Content-Type":
+                            "application/json"
+                    },
+
+                    body:
+                        JSON.stringify(
+                            payload
+                        )
+                }
+            );
+
+
+        const data =
+            await response.json();
+
+
+        console.log(
+            "[MONEY AI] Generate response:",
+            data
+        );
+
+
+        if(!response.ok){
+
+            throw new Error(
+                data.error ||
+                data.details ||
+                "Generation failed"
+            );
 
         }
 
 
-        container.innerHTML = trends.map((x,index) => {
-
-            const title =
-                escapeHtml(x.title || 'Untitled story');
-
-            const source =
-                escapeHtml(x.source || 'Unknown source');
-
-            const date =
-                x.published_at
-                ? new Date(x.published_at).toLocaleString()
-                : 'Date unavailable';
-
-            const url =
-                x.url
-                ? `
-                    <a
-                        class="source-link"
-                        href="${escapeAttribute(x.url)}"
-                        target="_blank"
-                        rel="noopener noreferrer"
-                    >
-                        Read source
-                    </a>
-                  `
-                : '';
-
-
-            return `
-                <div class="trend">
-
-                    <div class="trend-title">
-                        ${index + 1}. ${title}
-                    </div>
-
-                    <div class="trend-meta">
-                        ${source} · ${date}
-                        ${url}
-                    </div>
-
-                    <button
-                        onclick="createFromTrend(${JSON.stringify(x)})"
-                    >
-                        Create Video
-                    </button>
-
-                </div>
-            `;
-
-        }).join('');
-
-
-    }catch(error){
-
-        console.error(error);
-
-        document.getElementById('trends').innerHTML =
-            '<p>Could not load trends.</p>';
-
-    }
-
-}
-
-
-async function createFromTrend(trend){
-
-    const title =
-        trend.title || '';
-
-    if(!title){
-
-        alert('This trend has no title.');
-
-        return;
-
-    }
-
-
-    document.getElementById('result').textContent =
-        'Creating video from real trend...';
-
-
-    try{
-
-        const response =
-            await fetch(
-                '/api/generate',
-                {
-                    method:'POST',
-                    headers:{
-                        'Content-Type':'application/json'
-                    },
-                    body:JSON.stringify({
-
-                        topic:title,
-
-                        source_url:
-                            trend.url || null,
-
-                        source_name:
-                            trend.source || null,
-
-                        published_at:
-                            trend.published_at || null
-
-                    })
-                }
-            );
-
-
-        const data =
-            await response.json();
-
-
-        document.getElementById('result').textContent =
-            JSON.stringify(data,null,2);
+        setResult(
+            "Video generation started.\n\n" +
+            "Job ID: " +
+            data.job_id +
+            "\n\nStatus: rendering..."
+        );
 
 
         await loadJobs();
 
         startPolling();
 
-
     }catch(error){
 
-        document.getElementById('result').textContent =
-            'Error: ' + error.message;
+        console.error(
+            "[MONEY AI] Generate error:",
+            error
+        );
+
+        setResult(
+            "ERROR: " +
+            error.message,
+            "error"
+        );
+
+    }finally{
+
+        if(button){
+
+            button.disabled = false;
+
+            button.textContent =
+                "Create Video";
+        }
 
     }
-
 }
 
 
+/* ============================================================
+   MANUAL GENERATION
+   ============================================================ */
+
 async function generateManual(){
 
+    const input =
+        document.getElementById("topic");
+
+    const button =
+        document.getElementById(
+            "manualButton"
+        );
+
     const topic =
-        document.getElementById('topic').value.trim();
+        input.value.trim();
 
 
     if(!topic){
 
-        alert('Βάλε πρώτα ένα topic.');
+        alert(
+            "Βάλε πρώτα ένα topic."
+        );
 
         return;
-
     }
 
 
-    document.getElementById('result').textContent =
-        'Generating...';
+    button.disabled = true;
+    button.textContent =
+        "Generating...";
+
+
+    setResult(
+        "Generating video..."
+    );
 
 
     try{
 
         const response =
             await fetch(
-                '/api/generate',
+                "/api/generate",
                 {
-                    method:'POST',
+                    method:"POST",
+
                     headers:{
-                        'Content-Type':'application/json'
+                        "Content-Type":
+                            "application/json"
                     },
-                    body:JSON.stringify({
-                        topic:topic
-                    })
+
+                    body:
+                        JSON.stringify({
+                            topic:topic
+                        })
                 }
             );
 
@@ -442,155 +681,261 @@ async function generateManual(){
             await response.json();
 
 
-        document.getElementById('result').textContent =
-            JSON.stringify(data,null,2);
+        if(!response.ok){
+
+            throw new Error(
+                data.error ||
+                data.details ||
+                "Generation failed"
+            );
+
+        }
+
+
+        setResult(
+            "Video generation started.\n\n" +
+            "Job ID: " +
+            data.job_id +
+            "\n\nStatus: rendering..."
+        );
 
 
         await loadJobs();
 
         startPolling();
 
-
     }catch(error){
 
-        document.getElementById('result').textContent =
-            'Error: ' + error.message;
+        console.error(
+            "[MONEY AI] Manual generation error:",
+            error
+        );
 
+        setResult(
+            "ERROR: " +
+            error.message,
+            "error"
+        );
+
+    }finally{
+
+        button.disabled = false;
+
+        button.textContent =
+            "Generate Video";
     }
-
 }
 
 
-function startPolling(){
-
-    setTimeout(loadJobs,3000);
-    setTimeout(loadJobs,6000);
-    setTimeout(loadJobs,10000);
-    setTimeout(loadJobs,15000);
-
-}
-
+/* ============================================================
+   JOBS
+   ============================================================ */
 
 async function loadJobs(){
 
     try{
 
         const response =
-            await fetch('/api/jobs');
+            await fetch(
+                "/api/jobs"
+            );
+
+        if(!response.ok){
+
+            throw new Error(
+                "Jobs request failed"
+            );
+        }
 
         const jobsData =
             await response.json();
 
         const jobs =
-            document.getElementById('jobs');
+            document.getElementById(
+                "jobs"
+            );
 
 
-        if(!jobsData.length){
+        if(!Array.isArray(jobsData) ||
+           !jobsData.length){
 
             jobs.innerHTML =
-                '<p>No jobs yet.</p>';
+                "<p>No jobs yet.</p>";
 
             return;
-
         }
 
 
         jobs.innerHTML =
-            jobsData.map(x => {
+            jobsData.map(
+                job => {
 
-                let video = '';
+                    let video = "";
 
+                    if(
+                        job.status ===
+                        "video_ready"
+                    ){
 
-                if(x.status === 'video_ready'){
-
-                    video = `
-                        <video
-                            controls
-                            playsinline
-                        >
-                            <source
-                                src="/videos/money_ai_${x.id}.mp4"
-                                type="video/mp4"
+                        video =
+                            `
+                            <video
+                                controls
+                                playsinline
                             >
-                            Your browser does not support video playback.
-                        </video>
-                    `;
-
-                }
-
-
-                const source =
-                    x.content &&
-                    x.content.source
-                    ? x.content.source
-                    : null;
+                                <source
+                                    src="/videos/money_ai_${job.id}.mp4"
+                                    type="video/mp4"
+                                >
+                                Your browser does not
+                                support video playback.
+                            </video>
+                            `;
+                    }
 
 
-                const sourceLink =
-                    source && source.url
-                    ? `
-                        <a
-                            class="source-link"
-                            href="${escapeAttribute(source.url)}"
-                            target="_blank"
-                            rel="noopener noreferrer"
-                        >
-                            Source
-                        </a>
-                      `
-                    : '';
+                    const source =
+                        job.content &&
+                        job.content.source
+                            ? job.content.source
+                            : null;
 
 
-                return `
+                    let sourceLink = "";
+
+                    if(
+                        source &&
+                        source.url
+                    ){
+
+                        sourceLink =
+                            `
+                            <a
+                                class="source-link"
+                                href="${escapeAttribute(source.url)}"
+                                target="_blank"
+                                rel="noopener noreferrer"
+                            >
+                                Source
+                            </a>
+                            `;
+                    }
+
+
+                    return `
                     <div class="job">
 
                         <strong>
-                            #${x.id} — ${escapeHtml(x.topic)}
+                            #${job.id}
+                            —
+                            ${escapeHtml(
+                                job.topic
+                            )}
                         </strong>
 
                         <div class="status">
-                            Status: ${escapeHtml(x.status)}
+
+                            Status:
+                            ${escapeHtml(
+                                job.status
+                            )}
+
                             ${sourceLink}
+
                         </div>
 
                         ${video}
 
                     </div>
-                `;
+                    `;
 
-            }).join('');
+                }
+            ).join("");
 
 
     }catch(error){
 
-        console.error(error);
+        console.error(
+            "Jobs error:",
+            error
+        );
 
-        document.getElementById('jobs').innerHTML =
-            '<p>Could not load jobs.</p>';
+        document.getElementById(
+            "jobs"
+        ).innerHTML =
+            `
+            <p class="error">
+                Could not load jobs.
+            </p>
+            `;
 
     }
-
 }
 
 
-function escapeHtml(value){
+/* ============================================================
+   POLLING
+   ============================================================ */
 
-    return String(value || '')
-        .replace(/&/g,'&amp;')
-        .replace(/</g,'&lt;')
-        .replace(/>/g,'&gt;')
-        .replace(/"/g,'&quot;')
-        .replace(/'/g,'&#039;');
+function startPolling(){
 
+    setTimeout(
+        loadJobs,
+        3000
+    );
+
+    setTimeout(
+        loadJobs,
+        6000
+    );
+
+    setTimeout(
+        loadJobs,
+        10000
+    );
+
+    setTimeout(
+        loadJobs,
+        15000
+    );
+
+    setTimeout(
+        loadJobs,
+        25000
+    );
+
+    setTimeout(
+        loadJobs,
+        40000
+    );
 }
 
 
-function escapeAttribute(value){
+/* ============================================================
+   MANUAL BUTTON
+   ============================================================ */
 
-    return String(value || '')
-        .replace(/"/g,'&quot;')
-        .replace(/</g,'&lt;')
-        .replace(/>/g,'&gt;');
+document
+    .getElementById(
+        "manualButton"
+    )
+    .addEventListener(
+        "click",
+        generateManual
+    );
+
+
+/* ============================================================
+   INITIAL LOAD
+   ============================================================ */
+
+async function load(){
+
+    await loadHealth();
+
+    await loadTrends();
+
+    await loadJobs();
 
 }
 
