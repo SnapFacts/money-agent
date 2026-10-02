@@ -85,8 +85,16 @@ def render_job_background(job_id, content):
 
         update_job_status(job_id, "video_ready")
 
+        print(
+            f"[MONEY AI] Video ready for job {job_id}: {output}",
+            flush=True,
+        )
+
     except Exception as exc:
-        print(f"Video rendering failed for job {job_id}: {exc}")
+        print(
+            f"[MONEY AI] Video rendering failed for job {job_id}: {exc}",
+            flush=True,
+        )
 
         try:
             update_job_status(job_id, "error")
@@ -97,13 +105,22 @@ def render_job_background(job_id, content):
 @app.post("/api/generate")
 def api_generate():
     payload = request.get_json(silent=True) or {}
+
     topic = (payload.get("topic") or "").strip()
+    source_url = (payload.get("source_url") or "").strip() or None
+    source_name = (payload.get("source_name") or "").strip() or None
+    published_at = (payload.get("published_at") or "").strip() or None
 
     if not topic:
         return {"error": "topic is required"}, 400
 
     try:
-        content = generate_content(topic)
+        content = generate_content(
+            topic=topic,
+            source_url=source_url,
+            source_name=source_name,
+            published_at=published_at,
+        )
 
         job_id = create_content_job(topic, content)
 
@@ -119,12 +136,19 @@ def api_generate():
             {
                 "job_id": job_id,
                 "topic": topic,
+                "source_url": source_url,
+                "source_name": source_name,
                 "content": content,
                 "status": "rendering",
             }
         )
 
     except Exception as exc:
+        print(
+            f"[MONEY AI] Content generation failed: {exc}",
+            flush=True,
+        )
+
         return {
             "error": "Content generation failed.",
             "details": str(exc),
