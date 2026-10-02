@@ -33,7 +33,17 @@ button{
     border:0;
     border-radius:10px;
     padding:11px 16px;
-    cursor:pointer
+    cursor:pointer;
+    font-weight:bold
+}
+
+button:hover{
+    opacity:.85
+}
+
+button:disabled{
+    opacity:.5;
+    cursor:not-allowed
 }
 
 input{
@@ -42,7 +52,8 @@ input{
     border:1px solid #343a46;
     border-radius:10px;
     padding:12px;
-    width:70%
+    width:70%;
+    box-sizing:border-box
 }
 
 .grid{
@@ -59,8 +70,29 @@ pre{
     color:#a8afbd
 }
 
+.trend{
+    padding:18px;
+    margin:12px 0;
+    background:#0d0f14;
+    border:1px solid #292e39;
+    border-radius:12px
+}
+
+.trend-title{
+    font-size:18px;
+    font-weight:bold;
+    line-height:1.4;
+    margin-bottom:10px
+}
+
+.trend-meta{
+    color:#8f98a8;
+    font-size:13px;
+    margin-bottom:14px
+}
+
 .job{
-    padding:14px;
+    padding:16px;
     margin:10px 0;
     background:#0d0f14;
     border-radius:10px
@@ -79,6 +111,20 @@ video{
     color:#a8afbd;
     margin-top:6px
 }
+
+.source-link{
+    color:#8ab4ff;
+    text-decoration:none;
+    margin-left:8px
+}
+
+.source-link:hover{
+    text-decoration:underline
+}
+
+#result{
+    margin-top:16px
+}
 </style>
 </head>
 
@@ -89,7 +135,7 @@ video{
 <h1>MONEY AI</h1>
 
 <p class="small">
-Automatic trend → content → video pipeline.
+Real trend → research → content → video pipeline.
 </p>
 
 
@@ -98,20 +144,23 @@ Automatic trend → content → video pipeline.
 <div class="card">
 <h3>TikTok</h3>
 <p id="tiktok">Checking...</p>
+
 <a href="/tiktok/login">
 <button>Connect TikTok</button>
 </a>
 </div>
+
 
 <div class="card">
 <h3>AI</h3>
 <p id="ai">Checking...</p>
 </div>
 
+
 <div class="card">
 <h3>Pipeline</h3>
 <p>
-Trend discovery, script generation and video rendering are enabled.
+Real trend discovery, source-aware content generation and video rendering.
 </p>
 </div>
 
@@ -120,29 +169,33 @@ Trend discovery, script generation and video rendering are enabled.
 
 <div class="card">
 
-<h2>Create a video</h2>
+<h2>🔥 Trending stories</h2>
 
-<input
-    id="topic"
-    placeholder="π.χ. AI εργαλεία που αλλάζουν τη δουλειά"
->
+<p class="small">
+Choose a real story and MONEY AI will use its source when creating the video.
+</p>
 
-<button onclick="generate()">
-Generate
-</button>
-
-<pre id="result"></pre>
+<div id="trends">
+Loading trends...
+</div>
 
 </div>
 
 
 <div class="card">
 
-<h2>Trend candidates</h2>
+<h2>Create manually</h2>
 
-<div id="trends">
-Loading...
-</div>
+<input
+    id="topic"
+    placeholder="π.χ. Why AI is changing Wall Street jobs"
+>
+
+<button onclick="generateManual()">
+Generate Video
+</button>
+
+<pre id="result"></pre>
 
 </div>
 
@@ -176,14 +229,10 @@ async function load(){
         document.getElementById('ai').textContent =
             h.ai_configured
             ? 'OpenAI configured'
-            : 'Fallback mode — add OPENAI_API_KEY';
+            : 'Demo mode — no paid AI required';
 
 
-        const t = await fetch('/api/trends').then(r => r.json());
-
-        document.getElementById('trends').innerHTML =
-            t.map(x => `<p>${x.title}</p>`).join('');
-
+        await loadTrends();
 
         await loadJobs();
 
@@ -196,58 +245,320 @@ async function load(){
 }
 
 
-async function loadJobs(){
+async function loadTrends(){
 
     try{
 
-        const j = await fetch('/api/jobs').then(r => r.json());
+        const response =
+            await fetch('/api/trends');
 
-        const jobs = document.getElementById('jobs');
+        const trends =
+            await response.json();
 
-        if(!j.length){
+        const container =
+            document.getElementById('trends');
 
-            jobs.innerHTML = '<p>No jobs yet.</p>';
+
+        if(!trends.length){
+
+            container.innerHTML =
+                '<p>No trends found.</p>';
 
             return;
+
         }
 
 
-        jobs.innerHTML = j.map(x => {
+        container.innerHTML = trends.map((x,index) => {
 
-            let video = '';
+            const title =
+                escapeHtml(x.title || 'Untitled story');
 
-            if(x.status === 'video_ready'){
+            const source =
+                escapeHtml(x.source || 'Unknown source');
 
-                video = `
-                    <video controls playsinline>
-                        <source
-                            src="/videos/money_ai_${x.id}.mp4"
-                            type="video/mp4"
-                        >
-                        Your browser does not support video playback.
-                    </video>
-                `;
+            const date =
+                x.published_at
+                ? new Date(x.published_at).toLocaleString()
+                : 'Date unavailable';
 
-            }
+            const url =
+                x.url
+                ? `
+                    <a
+                        class="source-link"
+                        href="${escapeAttribute(x.url)}"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                    >
+                        Read source
+                    </a>
+                  `
+                : '';
 
 
             return `
-                <div class="job">
+                <div class="trend">
 
-                    <strong>
-                        #${x.id} — ${x.topic}
-                    </strong>
-
-                    <div class="status">
-                        Status: ${x.status}
+                    <div class="trend-title">
+                        ${index + 1}. ${title}
                     </div>
 
-                    ${video}
+                    <div class="trend-meta">
+                        ${source} · ${date}
+                        ${url}
+                    </div>
+
+                    <button
+                        onclick="createFromTrend(${JSON.stringify(x)})"
+                    >
+                        Create Video
+                    </button>
 
                 </div>
             `;
 
         }).join('');
+
+
+    }catch(error){
+
+        console.error(error);
+
+        document.getElementById('trends').innerHTML =
+            '<p>Could not load trends.</p>';
+
+    }
+
+}
+
+
+async function createFromTrend(trend){
+
+    const title =
+        trend.title || '';
+
+    if(!title){
+
+        alert('This trend has no title.');
+
+        return;
+
+    }
+
+
+    document.getElementById('result').textContent =
+        'Creating video from real trend...';
+
+
+    try{
+
+        const response =
+            await fetch(
+                '/api/generate',
+                {
+                    method:'POST',
+                    headers:{
+                        'Content-Type':'application/json'
+                    },
+                    body:JSON.stringify({
+
+                        topic:title,
+
+                        source_url:
+                            trend.url || null,
+
+                        source_name:
+                            trend.source || null,
+
+                        published_at:
+                            trend.published_at || null
+
+                    })
+                }
+            );
+
+
+        const data =
+            await response.json();
+
+
+        document.getElementById('result').textContent =
+            JSON.stringify(data,null,2);
+
+
+        await loadJobs();
+
+        startPolling();
+
+
+    }catch(error){
+
+        document.getElementById('result').textContent =
+            'Error: ' + error.message;
+
+    }
+
+}
+
+
+async function generateManual(){
+
+    const topic =
+        document.getElementById('topic').value.trim();
+
+
+    if(!topic){
+
+        alert('Βάλε πρώτα ένα topic.');
+
+        return;
+
+    }
+
+
+    document.getElementById('result').textContent =
+        'Generating...';
+
+
+    try{
+
+        const response =
+            await fetch(
+                '/api/generate',
+                {
+                    method:'POST',
+                    headers:{
+                        'Content-Type':'application/json'
+                    },
+                    body:JSON.stringify({
+                        topic:topic
+                    })
+                }
+            );
+
+
+        const data =
+            await response.json();
+
+
+        document.getElementById('result').textContent =
+            JSON.stringify(data,null,2);
+
+
+        await loadJobs();
+
+        startPolling();
+
+
+    }catch(error){
+
+        document.getElementById('result').textContent =
+            'Error: ' + error.message;
+
+    }
+
+}
+
+
+function startPolling(){
+
+    setTimeout(loadJobs,3000);
+    setTimeout(loadJobs,6000);
+    setTimeout(loadJobs,10000);
+    setTimeout(loadJobs,15000);
+
+}
+
+
+async function loadJobs(){
+
+    try{
+
+        const response =
+            await fetch('/api/jobs');
+
+        const jobsData =
+            await response.json();
+
+        const jobs =
+            document.getElementById('jobs');
+
+
+        if(!jobsData.length){
+
+            jobs.innerHTML =
+                '<p>No jobs yet.</p>';
+
+            return;
+
+        }
+
+
+        jobs.innerHTML =
+            jobsData.map(x => {
+
+                let video = '';
+
+
+                if(x.status === 'video_ready'){
+
+                    video = `
+                        <video
+                            controls
+                            playsinline
+                        >
+                            <source
+                                src="/videos/money_ai_${x.id}.mp4"
+                                type="video/mp4"
+                            >
+                            Your browser does not support video playback.
+                        </video>
+                    `;
+
+                }
+
+
+                const source =
+                    x.content &&
+                    x.content.source
+                    ? x.content.source
+                    : null;
+
+
+                const sourceLink =
+                    source && source.url
+                    ? `
+                        <a
+                            class="source-link"
+                            href="${escapeAttribute(source.url)}"
+                            target="_blank"
+                            rel="noopener noreferrer"
+                        >
+                            Source
+                        </a>
+                      `
+                    : '';
+
+
+                return `
+                    <div class="job">
+
+                        <strong>
+                            #${x.id} — ${escapeHtml(x.topic)}
+                        </strong>
+
+                        <div class="status">
+                            Status: ${escapeHtml(x.status)}
+                            ${sourceLink}
+                        </div>
+
+                        ${video}
+
+                    </div>
+                `;
+
+            }).join('');
 
 
     }catch(error){
@@ -262,60 +573,24 @@ async function loadJobs(){
 }
 
 
-async function generate(){
+function escapeHtml(value){
 
-    const topic =
-        document.getElementById('topic').value.trim();
+    return String(value || '')
+        .replace(/&/g,'&amp;')
+        .replace(/</g,'&lt;')
+        .replace(/>/g,'&gt;')
+        .replace(/"/g,'&quot;')
+        .replace(/'/g,'&#039;');
 
-    if(!topic){
-
-        alert('Βάλε πρώτα ένα topic.');
-
-        return;
-    }
-
-
-    document.getElementById('result').textContent =
-        'Generating...';
+}
 
 
-    try{
+function escapeAttribute(value){
 
-        const r = await fetch(
-            '/api/generate',
-            {
-                method:'POST',
-                headers:{
-                    'Content-Type':'application/json'
-                },
-                body:JSON.stringify({
-                    topic:topic
-                })
-            }
-        );
-
-
-        const data = await r.json();
-
-
-        document.getElementById('result').textContent =
-            JSON.stringify(data,null,2);
-
-
-        await loadJobs();
-
-
-        setTimeout(loadJobs,3000);
-        setTimeout(loadJobs,7000);
-        setTimeout(loadJobs,12000);
-
-
-    }catch(error){
-
-        document.getElementById('result').textContent =
-            'Error: ' + error.message;
-
-    }
+    return String(value || '')
+        .replace(/"/g,'&quot;')
+        .replace(/</g,'&lt;')
+        .replace(/>/g,'&gt;');
 
 }
 
