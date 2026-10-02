@@ -97,7 +97,7 @@ def api_generate():
         }, 500
 
 
-@app.post("/api/render/<int:job_id")
+@app.post("/api/render/<int:job_id>")
 def api_render(job_id):
     job = get_job(job_id)
 
