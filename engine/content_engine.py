@@ -1,64 +1,169 @@
 import json
 import os
+import re
+import requests
+
 from openai import OpenAI
 
+
 SYSTEM = """
-You are MONEY AI, an expert short-form video content producer.
+You are MONEY AI, an expert short-form video producer.
 
 Return ONLY valid JSON with exactly these keys:
 hook, script, caption, hashtags, visual_plan.
 
-Create a factual, engaging 30-45 second vertical-video concept.
+Create a factual 30-45 second vertical video.
 
 Rules:
 - Never invent facts, statistics, quotes, events or people.
-- If the topic is uncertain, say so.
-- Use simple spoken language.
-- The hook must grab attention without clickbait lies.
-- The script must contain useful information, not generic filler.
+- Use only information supported by the supplied source material.
+- Do not turn predictions or opinions into facts.
+- Hook must create curiosity without lying.
+- Script must be specific and useful.
+- Use short spoken sentences.
+- Explain why the story matters.
 - End with a clear takeaway.
 - hashtags must be an array of strings.
-- visual_plan must be an array of 5-7 concrete scene descriptions.
+- visual_plan must contain 6-8 concrete visual scenes.
 """
 
 
-def demo_content(topic):
-    topic = topic.strip()
+def clean_text(text):
+    if not text:
+        return ""
+
+    text = re.sub(r"\s+", " ", text)
+    return text.strip()
+
+
+def fetch_source(url):
+    if not url:
+        return {}
+
+    try:
+        response = requests.get(
+            url,
+            timeout=12,
+            headers={
+                "User-Agent": "Mozilla/5.0 MONEY-AI/1.0"
+            },
+        )
+
+        response.raise_for_status()
+
+        html = response.text
+
+        title = ""
+        description = ""
+
+        title_match = re.search(
+            r'<meta[^>]+property=["\']og:title["\'][^>]+content=["\']([^"\']+)',
+            html,
+            re.IGNORECASE,
+        )
+
+        if title_match:
+            title = clean_text(title_match.group(1))
+
+        description_match = re.search(
+            r'<meta[^>]+property=["\']og:description["\'][^>]+content=["\']([^"\']+)',
+            html,
+            re.IGNORECASE,
+        )
+
+        if description_match:
+            description = clean_text(description_match.group(1))
+
+        if not title:
+            title_match = re.search(
+                r"<title[^>]*>(.*?)</title>",
+                html,
+                re.IGNORECASE | re.DOTALL,
+            )
+
+            if title_match:
+                title = clean_text(title_match.group(1))
+
+        return {
+            "title": title,
+            "description": description,
+        }
+
+    except Exception:
+        return {}
+
+
+def demo_content(topic, source_url=None, source_name=None):
+    topic = clean_text(topic)
+
+    source = fetch_source(source_url)
+
+    real_title = source.get("title") or topic
+    description = source.get("description") or ""
+
+    source_label = source_name or "Source"
+
+    if description:
+        script = (
+            f"Αυτό είναι το θέμα που συζητιέται τώρα: {real_title}. "
+            f"{description} "
+            "Το σημαντικό εδώ είναι να ξεχωρίσουμε την είδηση "
+            "από τις προβλέψεις και τις υπερβολές. "
+            "Αν αυτή η εξέλιξη συνεχιστεί, το βασικό ερώτημα είναι "
+            "τι σημαίνει στην πράξη για τους ανθρώπους και την αγορά. "
+            "Κράτα την πηγή και έλεγξε τα δεδομένα πριν βγάλεις συμπέρασμα."
+        )
+    else:
+        script = (
+            f"Μια νέα εξέλιξη τραβάει την προσοχή: {real_title}. "
+            f"Η διαθέσιμη πληροφορία από το {source_label} "
+            "δείχνει ότι πρόκειται για θέμα που αξίζει να παρακολουθήσουμε. "
+            "Δεν θα παρουσιάσουμε προβλέψεις ως γεγονότα. "
+            "Το βασικό είναι να δούμε τι έχει επιβεβαιωθεί, "
+            "τι παραμένει άγνωστο και τι μπορεί να αλλάξει στην πράξη. "
+            "Αυτό είναι το σημείο που αξίζει να κρατήσεις."
+        )
 
     return {
-        "hook": f"Αξίζει πραγματικά την προσοχή σου το «{topic}»; Να τι πρέπει να ξέρεις.",
-        "script": (
-            f"Ας το δούμε απλά. Το θέμα είναι: {topic}. "
-            "Πριν βγάλεις συμπέρασμα, ξεχώρισε τι είναι επιβεβαιωμένο "
-            "από αυτό που είναι απλώς ισχυρισμός ή πρόβλεψη. "
-            "Το σημαντικό είναι να καταλάβεις τι αλλάζει στην πράξη "
-            "και ποιο είναι το βασικό συμπέρασμα. "
-            "Κράτα λοιπόν τα δεδομένα και όχι τον θόρυβο."
-        ),
+        "hook": f"Αυτό συμβαίνει τώρα — και μπορεί να έχει μεγαλύτερη σημασία απ' όσο φαίνεται.",
+        "script": script,
         "caption": (
-            f"Τι πρέπει πραγματικά να ξέρεις για: {topic}. "
-            "Χωρίς υπερβολές και χωρίς να παρουσιάζουμε εικασίες ως γεγονότα."
+            f"{real_title}. "
+            "Τα βασικά σημεία, χωρίς clickbait και χωρίς να παρουσιάζουμε "
+            "εικασίες ως γεγονότα."
         ),
         "hashtags": [
             "#moneyai",
             "#ai",
             "#technology",
+            "#business",
             "#news",
-            "#explained"
+            "#explained",
         ],
         "visual_plan": [
-            f"Title card με το θέμα: {topic}",
-            "Μεγάλο kinetic-text hook στην οθόνη",
-            "Απλό visual που παρουσιάζει το βασικό θέμα",
-            "Κείμενο στην οθόνη: Τι γνωρίζουμε",
-            "Κείμενο στην οθόνη: Τι δεν γνωρίζουμε",
-            "Σύντομο visual με το βασικό takeaway",
-            "End card με MONEY AI"
-        ]
+            f"Opening shot με headline: {real_title}",
+            "Γρήγορο zoom στο βασικό σημείο της είδησης",
+            "Source card με το όνομα της πηγής",
+            "Animated text με το σημαντικότερο γεγονός",
+            "Visual που εξηγεί γιατί έχει σημασία",
+            "Σύντομο section: Τι γνωρίζουμε",
+            "Σύντομο section: Τι δεν έχει επιβεβαιωθεί",
+            "Final takeaway με MONEY AI branding",
+        ],
+        "source": {
+            "url": source_url,
+            "name": source_name,
+            "title": real_title,
+        },
     }
 
 
-def generate_content(topic):
+def generate_content(
+    topic,
+    source_url=None,
+    source_name=None,
+    published_at=None,
+):
     topic = (topic or "").strip()
 
     if not topic:
@@ -66,17 +171,42 @@ def generate_content(topic):
 
     api_key = os.getenv("OPENAI_API_KEY")
 
-    # Free demo mode when no API key is available.
     if not api_key:
-        return demo_content(topic)
+        return demo_content(
+            topic,
+            source_url=source_url,
+            source_name=source_name,
+        )
 
     try:
         client = OpenAI(api_key=api_key)
 
+        source_material = {
+            "topic": topic,
+            "source_url": source_url,
+            "source_name": source_name,
+            "published_at": published_at,
+        }
+
+        source_page = fetch_source(source_url)
+
+        if source_page:
+            source_material["source_title"] = source_page.get("title")
+            source_material["source_description"] = source_page.get(
+                "description"
+            )
+
         response = client.responses.create(
             model=os.getenv("OPENAI_MODEL", "gpt-6-luna"),
             instructions=SYSTEM,
-            input=f"Topic: {topic}",
+            input=(
+                "Create the video from this source material:\n\n"
+                + json.dumps(
+                    source_material,
+                    ensure_ascii=False,
+                    indent=2,
+                )
+            ),
         )
 
         text = response.output_text.strip()
@@ -88,9 +218,17 @@ def generate_content(topic):
         data.setdefault("hashtags", [])
         data.setdefault("visual_plan", [])
 
+        data["source"] = {
+            "url": source_url,
+            "name": source_name,
+            "title": topic,
+        }
+
         return data
 
     except Exception:
-        # If the API has no credits or is unavailable,
-        # continue using the free demo generator.
-        return demo_content(topic)
+        return demo_content(
+            topic,
+            source_url=source_url,
+            source_name=source_name,
+        )
