@@ -1,21 +1,21 @@
 import os
 import re
 import math
+import subprocess
 from io import BytesIO
 from pathlib import Path
+from urllib.parse import quote
 
 import requests
 import imageio.v2 as imageio
 import numpy as np
 
-from PIL import (
-    Image,
-    ImageDraw,
-    ImageFont,
-    ImageFilter,
-    ImageOps,
-)
+from PIL import Image, ImageDraw, ImageFont, ImageFilter
 
+
+# ============================================================
+# MONEY AI — FINAL VIDEO ENGINE
+# ============================================================
 
 VIDEO_DIR = Path(
     os.getenv("VIDEO_DIR", "generated_videos")
@@ -31,35 +31,48 @@ H = 960
 FPS = 12
 
 
+# ============================================================
+# FONTS
+# ============================================================
+
 def get_font(size, bold=True):
     if bold:
-        candidates = [
+        paths = [
             "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
             "/usr/share/fonts/truetype/liberation2/LiberationSans-Bold.ttf",
         ]
     else:
-        candidates = [
+        paths = [
             "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
             "/usr/share/fonts/truetype/liberation2/LiberationSans-Regular.ttf",
         ]
 
-    for path in candidates:
+    for path in paths:
         if os.path.exists(path):
             return ImageFont.truetype(path, size)
 
     return ImageFont.load_default()
 
 
-FONT_SMALL = get_font(22, False)
-FONT_LABEL = get_font(26, True)
-FONT_BODY = get_font(31, False)
-FONT_TITLE = get_font(45, True)
-FONT_BIG = get_font(62, True)
+FONT_XS = get_font(20, False)
+FONT_SMALL = get_font(24, True)
+FONT_BODY = get_font(30, False)
+FONT_BODY_BOLD = get_font(31, True)
+FONT_TITLE = get_font(44, True)
+FONT_BIG = get_font(60, True)
 
+
+# ============================================================
+# TEXT HELPERS
+# ============================================================
 
 def clean_text(value):
-    value = str(value or "")
+    if value is None:
+        return ""
+
+    value = str(value)
     value = re.sub(r"\s+", " ", value)
+
     return value.strip()
 
 
@@ -92,14 +105,91 @@ def wrap_text(draw, text, font, max_width):
     return lines
 
 
-def load_remote_image(url):
+def draw_shadow_text(
+    draw,
+    xy,
+    text,
+    font,
+    fill=(255, 255, 255),
+    shadow=(0, 0, 0),
+):
+    x, y = xy
+
+    draw.text(
+        (x + 3, y + 4),
+        text,
+        font=font,
+        fill=shadow,
+    )
+
+    draw.text(
+        (x, y),
+        text,
+        font=font,
+        fill=fill,
+    )
+
+
+def draw_centered(
+    draw,
+    text,
+    y,
+    font,
+    max_width,
+    fill=(255, 255, 255),
+):
+    lines = wrap_text(
+        draw,
+        text,
+        font,
+        max_width,
+    )
+
+    if not lines:
+        return y
+
+    line_height = int(
+        font.size * 1.18
+    )
+
+    current_y = y
+
+    for line in lines:
+        box = draw.textbbox(
+            (0, 0),
+            line,
+            font=font,
+        )
+
+        width = box[2] - box[0]
+
+        x = (W - width) / 2
+
+        draw_shadow_text(
+            draw,
+            (x, current_y),
+            line,
+            font,
+            fill=fill,
+        )
+
+        current_y += line_height
+
+    return current_y
+
+
+# ============================================================
+# SOURCE IMAGE
+# ============================================================
+
+def download_source_image(url):
     if not url:
         return None
 
     try:
         response = requests.get(
             url,
-            timeout=12,
+            timeout=15,
             headers={
                 "User-Agent": (
                     "Mozilla/5.0 "
@@ -114,7 +204,7 @@ def load_remote_image(url):
             BytesIO(response.content)
         ).convert("RGB")
 
-        if image.width < 100 or image.height < 100:
+        if image.width < 200 or image.height < 200:
             return None
 
         image.thumbnail(
@@ -122,88 +212,113 @@ def load_remote_image(url):
             Image.Resampling.LANCZOS,
         )
 
+        print(
+            "[MONEY AI] Source image loaded",
+            flush=True,
+        )
+
         return image
 
     except Exception as exc:
         print(
-            f"[MONEY AI] Could not load source image: {exc}",
+            f"[MONEY AI] Source image unavailable: {exc}",
             flush=True,
         )
 
         return None
 
 
-def crop_cover(image, width, height):
-    ratio = max(
-        width / image.width,
-        height / image.height,
-    )
-
-    new_size = (
-        int(image.width * ratio),
-        int(image.height * ratio),
-    )
-
-    image = image.resize(
-        new_size,
-        Image.Resampling.LANCZOS,
-    )
-
-    left = (image.width - width) // 2
-    top = (image.height - height) // 2
-
-    return image.crop(
-        (
-            left,
-            top,
-            left + width,
-            top + height,
-        )
-    )
-
-
-def make_gradient():
-    img = Image.new(
+def make_background():
+    image = Image.new(
         "RGB",
         (W, H),
     )
 
-    pixels = img.load()
+    draw = ImageDraw.Draw(image)
 
     for y in range(H):
         p = y / max(1, H - 1)
 
-        r = int(7 + 9 * p)
-        g = int(9 + 12 * p)
-        b = int(16 + 22 * p)
+        r = int(7 + p * 10)
+        g = int(9 + p * 13)
+        b = int(16 + p * 23)
 
-        for x in range(W):
-            pixels[x, y] = (
-                r,
-                g,
-                b,
+        draw.line(
+            (0, y, W, y),
+            fill=(r, g, b),
+        )
+
+    return image
+
+
+def source_background(source_image, progress):
+    if source_image is None:
+        return make_background().convert("RGBA")
+
+    zoom = 1.0 + (
+        0.08 * progress
+    )
+
+    crop_width = int(
+        source_image.width / zoom
+    )
+
+    crop_height = int(
+        source_image.height / zoom
+    )
+
+    max_x = max(
+        0,
+        source_image.width - crop_width,
+    )
+
+    max_y = max(
+        0,
+        source_image.height - crop_height,
+    )
+
+    # Slow cinematic movement.
+    x = int(
+        max_x
+        * (
+            0.20
+            + 0.60
+            * progress
+        )
+    )
+
+    y = int(
+        max_y
+        * (
+            0.35
+            + 0.15
+            * math.sin(
+                progress * math.pi
             )
-
-    return img
-
-
-def add_dark_overlay(image, strength=130):
-    overlay = Image.new(
-        "RGBA",
-        image.size,
-        (0, 0, 0, strength),
+        )
     )
 
-    return Image.alpha_composite(
-        image.convert("RGBA"),
-        overlay,
+    crop = source_image.crop(
+        (
+            x,
+            y,
+            x + crop_width,
+            y + crop_height,
+        )
     )
 
+    crop = crop.resize(
+        (W, H),
+        Image.Resampling.LANCZOS,
+    )
 
-def add_bottom_gradient(image):
+    return crop.convert("RGBA")
+
+
+def add_dark_gradient(image):
     overlay = Image.new(
         "RGBA",
-        image.size,
+        (W, H),
         (0, 0, 0, 0),
     )
 
@@ -211,23 +326,28 @@ def add_bottom_gradient(image):
         overlay
     )
 
+    # Top protection for branding.
+    draw.rectangle(
+        (0, 0, W, 130),
+        fill=(0, 0, 0, 100),
+    )
+
+    # Heavy lower gradient for captions.
     for y in range(
-        int(H * 0.42),
+        int(H * 0.35),
         H,
+        4,
     ):
-        progress = (
-            y - H * 0.42
-        ) / (H * 0.58)
+        p = (
+            y - H * 0.35
+        ) / (H * 0.65)
 
         alpha = int(
-            min(
-                225,
-                25 + progress * 200,
-            )
+            30 + 205 * p
         )
 
-        draw.line(
-            (0, y, W, y),
+        draw.rectangle(
+            (0, y, W, y + 4),
             fill=(0, 0, 0, alpha),
         )
 
@@ -237,71 +357,44 @@ def add_bottom_gradient(image):
     )
 
 
-def add_glow(image, x, y, radius=190):
-    glow = Image.new(
-        "RGBA",
-        image.size,
-        (0, 0, 0, 0),
-    )
-
-    draw = ImageDraw.Draw(glow)
-
-    draw.ellipse(
-        (
-            x - radius,
-            y - radius,
-            x + radius,
-            y + radius,
-        ),
-        fill=(70, 110, 255, 45),
-    )
-
-    glow = glow.filter(
-        ImageFilter.GaussianBlur(
-            radius // 2
-        )
-    )
-
-    image.alpha_composite(glow)
-
+# ============================================================
+# BRANDING / UI
+# ============================================================
 
 def draw_brand(draw):
     draw.text(
-        (28, 26),
+        (28, 24),
         "MONEY AI",
-        font=FONT_LABEL,
+        font=FONT_SMALL,
         fill=(255, 255, 255),
     )
 
     draw.text(
-        (28, 61),
+        (28, 57),
         "NEWS • MONEY • AI",
-        font=FONT_SMALL,
-        fill=(185, 190, 205),
+        font=FONT_XS,
+        fill=(190, 195, 210),
     )
 
 
-def draw_progress(
-    draw,
-    progress,
-):
-    x1 = 28
-    x2 = W - 28
-    y = H - 19
+def draw_progress(draw, progress):
+    left = 28
+    right = W - 28
+    top = H - 18
 
     draw.rounded_rectangle(
         (
-            x1,
-            y,
-            x2,
-            y + 5,
+            left,
+            top,
+            right,
+            top + 5,
         ),
         radius=3,
-        fill=(80, 84, 98),
+        fill=(75, 80, 95),
     )
 
-    current = x1 + (
-        x2 - x1
+    current = left + (
+        right - left
     ) * max(
         0,
         min(1, progress),
@@ -309,174 +402,386 @@ def draw_progress(
 
     draw.rounded_rectangle(
         (
-            x1,
-            y,
+            left,
+            top,
             current,
-            y + 5,
+            top + 5,
         ),
         radius=3,
         fill=(255, 255, 255),
     )
 
 
-def draw_shadow_text(
-    draw,
-    position,
-    text,
-    font,
-    fill=(255, 255, 255),
-):
-    x, y = position
-
-    draw.text(
-        (
-            x + 3,
-            y + 4,
-        ),
-        text,
-        font=font,
-        fill=(0, 0, 0),
-    )
-
-    draw.text(
-        position,
-        text,
-        font=font,
-        fill=fill,
-    )
-
-
-def draw_center_text(
+def draw_label(
     draw,
     text,
-    y,
-    font,
-    max_width,
+    y=145,
 ):
-    lines = wrap_text(
-        draw,
-        text,
-        font,
-        max_width,
-    )
+    text = clean_text(text).upper()
 
-    if not lines:
-        return y
-
-    line_gap = 9
-    current_y = y
-
-    for line in lines:
-        box = draw.textbbox(
-            (0, 0),
-            line,
-            font=font,
-        )
-
-        width = (
-            box[2] - box[0]
-        )
-
-        x = (
-            W - width
-        ) / 2
-
-        draw_shadow_text(
-            draw,
-            (x, current_y),
-            line,
-            font,
-        )
-
-        current_y += (
-            box[3]
-            - box[1]
-            + line_gap
-        )
-
-    return current_y
-
-
-def make_visual_background(
-    source_image,
-    progress,
-):
-    if source_image is None:
-        return make_gradient().convert(
-            "RGBA"
-        )
-
-    base_width = W
-    base_height = H
-
-    zoom = (
-        1.0
-        + 0.10 * progress
-    )
-
-    crop_w = int(
-        source_image.width
-        / zoom
-    )
-
-    crop_h = int(
-        source_image.height
-        / zoom
-    )
-
-    max_x = max(
-        0,
-        source_image.width
-        - crop_w,
-    )
-
-    max_y = max(
-        0,
-        source_image.height
-        - crop_h,
-    )
-
-    x = int(
-        max_x
-        * (
-            0.35
-            + 0.30
-            * math.sin(
-                progress * math.pi
-            )
-        )
-    )
-
-    y = int(
-        max_y
-        * (
-            0.35
-            + 0.20
-            * progress
-        )
-    )
-
-    cropped = source_image.crop(
+    draw.rounded_rectangle(
         (
-            x,
+            28,
             y,
-            x + crop_w,
-            y + crop_h,
+            28 + 180,
+            y + 42,
+        ),
+        radius=21,
+        fill=(255, 255, 255),
+    )
+
+    draw.text(
+        (48, y + 9),
+        text[:18],
+        font=FONT_XS,
+        fill=(10, 12, 18),
+    )
+
+
+def draw_card(
+    draw,
+    x1,
+    y1,
+    x2,
+    y2,
+):
+    draw.rounded_rectangle(
+        (
+            x1,
+            y1,
+            x2,
+            y2,
+        ),
+        radius=24,
+        fill=(9, 12, 20),
+        outline=(85, 95, 120),
+        width=2,
+    )
+
+
+# ============================================================
+# SCENES
+# ============================================================
+
+def render_scene(
+    scene,
+    source_image,
+    local_progress,
+    global_progress,
+):
+    scene_type = scene["type"]
+
+    headline = clean_text(
+        scene.get("headline")
+    )
+
+    body = clean_text(
+        scene.get("body")
+    )
+
+    image = source_background(
+        source_image,
+        local_progress,
+    )
+
+    image = add_dark_gradient(
+        image
+    )
+
+    # Subtle moving light.
+    glow = Image.new(
+        "RGBA",
+        (W, H),
+        (0, 0, 0, 0),
+    )
+
+    glow_draw = ImageDraw.Draw(
+        glow
+    )
+
+    gx = int(
+        W * (
+            0.20
+            + 0.60
+            * local_progress
         )
     )
 
-    cropped = cropped.resize(
+    gy = int(
+        H * 0.18
+    )
+
+    glow_draw.ellipse(
         (
-            base_width,
-            base_height,
+            gx - 150,
+            gy - 150,
+            gx + 150,
+            gy + 150,
         ),
-        Image.Resampling.LANCZOS,
+        fill=(75, 105, 255, 28),
     )
 
-    return cropped.convert(
-        "RGBA"
+    glow = glow.filter(
+        ImageFilter.GaussianBlur(80)
     )
 
+    image = Image.alpha_composite(
+        image,
+        glow,
+    )
+
+    draw = ImageDraw.Draw(
+        image
+    )
+
+    draw_brand(draw)
+
+    if scene_type == "HOOK":
+        draw_label(
+            draw,
+            "WATCH THIS",
+            150,
+        )
+
+        draw_centered(
+            draw,
+            headline,
+            245,
+            FONT_BIG,
+            W - 60,
+        )
+
+        draw_centered(
+            draw,
+            "Άκου μέχρι το τέλος.",
+            650,
+            FONT_BODY_BOLD,
+            W - 80,
+            fill=(220, 225, 255),
+        )
+
+    elif scene_type == "STORY":
+        draw_label(
+            draw,
+            "THE STORY",
+            150,
+        )
+
+        draw_centered(
+            draw,
+            headline,
+            220,
+            FONT_TITLE,
+            W - 60,
+        )
+
+        if body:
+            draw_card(
+                draw,
+                28,
+                500,
+                W - 28,
+                750,
+            )
+
+            draw.text(
+                (52, 530),
+                "WHAT HAPPENED",
+                font=FONT_XS,
+                fill=(165, 180, 255),
+            )
+
+            lines = wrap_text(
+                draw,
+                body,
+                FONT_BODY,
+                W - 100,
+            )
+
+            y = 575
+
+            for line in lines[:5]:
+                draw.text(
+                    (52, y),
+                    line,
+                    font=FONT_BODY,
+                    fill=(245, 246, 250),
+                )
+
+                y += 43
+
+    elif scene_type == "WHY":
+        draw_label(
+            draw,
+            "WHY IT MATTERS",
+            150,
+        )
+
+        draw_centered(
+            draw,
+            headline,
+            220,
+            FONT_TITLE,
+            W - 60,
+        )
+
+        if body:
+            draw_card(
+                draw,
+                28,
+                540,
+                W - 28,
+                780,
+            )
+
+            draw.text(
+                (52, 570),
+                "KEY POINT",
+                font=FONT_XS,
+                fill=(165, 180, 255),
+            )
+
+            lines = wrap_text(
+                draw,
+                body,
+                FONT_BODY,
+                W - 100,
+            )
+
+            y = 615
+
+            for line in lines[:4]:
+                draw.text(
+                    (52, y),
+                    line,
+                    font=FONT_BODY,
+                    fill=(255, 255, 255),
+                )
+
+                y += 43
+
+    elif scene_type == "TAKEAWAY":
+        draw_label(
+            draw,
+            "TAKEAWAY",
+            150,
+        )
+
+        draw_centered(
+            draw,
+            headline,
+            240,
+            FONT_BIG,
+            W - 60,
+        )
+
+        if body:
+            draw.rounded_rectangle(
+                (
+                    28,
+                    590,
+                    W - 28,
+                    795,
+                ),
+                radius=24,
+                fill=(255, 255, 255),
+            )
+
+            lines = wrap_text(
+                draw,
+                body,
+                FONT_BODY_BOLD,
+                W - 100,
+            )
+
+            y = 630
+
+            for line in lines[:4]:
+                draw.text(
+                    (52, y),
+                    line,
+                    font=FONT_BODY_BOLD,
+                    fill=(10, 12, 18),
+                )
+
+                y += 43
+
+    elif scene_type == "SOURCE":
+        draw_label(
+            draw,
+            "SOURCE",
+            150,
+        )
+
+        draw_centered(
+            draw,
+            headline,
+            245,
+            FONT_TITLE,
+            W - 60,
+        )
+
+        draw_card(
+            draw,
+            28,
+            525,
+            W - 28,
+            735,
+        )
+
+        draw.text(
+            (52, 555),
+            "ORIGINAL STORY",
+            font=FONT_XS,
+            fill=(165, 180, 255),
+        )
+
+        lines = wrap_text(
+            draw,
+            body,
+            FONT_BODY,
+            W - 100,
+        )
+
+        y = 605
+
+        for line in lines[:4]:
+            draw.text(
+                (52, y),
+                line,
+                font=FONT_BODY,
+                fill=(245, 246, 250),
+            )
+
+            y += 43
+
+        draw.text(
+            (28, 805),
+            "MONEY AI",
+            font=FONT_SMALL,
+            fill=(255, 255, 255),
+        )
+
+        draw.text(
+            (28, 840),
+            "Facts first. Hype second.",
+            font=FONT_XS,
+            fill=(190, 195, 210),
+        )
+
+    draw_progress(
+        draw,
+        global_progress,
+    )
+
+    return np.asarray(
+        image.convert("RGB")
+    )
+
+
+# ============================================================
+# SCRIPT PROCESSING
+# ============================================================
 
 def split_script(script):
     script = clean_text(script)
@@ -495,333 +800,326 @@ def split_script(script):
         if clean_text(x)
     ]
 
-    if len(sentences) <= 2:
-        words = script.split()
-        chunks = []
-        current = []
+    if len(sentences) >= 3:
+        return sentences[:5]
 
-        for word in words:
-            current.append(word)
+    words = script.split()
 
-            if len(current) >= 13:
-                chunks.append(
-                    " ".join(current)
-                )
-                current = []
+    chunks = []
+    current = []
 
-        if current:
+    for word in words:
+        current.append(word)
+
+        if len(current) >= 12:
             chunks.append(
                 " ".join(current)
             )
+            current = []
 
-        return chunks[:5]
+    if current:
+        chunks.append(
+            " ".join(current)
+        )
 
-    return sentences[:5]
+    return chunks[:5]
 
 
-def scene_frame(
-    scene,
-    source_image,
-    progress,
-    global_progress,
+# ============================================================
+# OPTIONAL VOICEOVER
+# ============================================================
+
+def find_ffmpeg():
+    try:
+        import imageio_ffmpeg
+
+        return imageio_ffmpeg.get_ffmpeg_exe()
+
+    except Exception:
+        return None
+
+
+def create_voiceover(script, output_path):
+    """
+    Creates Greek TTS using the currently available
+    network TTS endpoint.
+
+    If unavailable, the video still renders normally.
+    """
+
+    script = clean_text(script)
+
+    if not script:
+        return False
+
+    # Split into manageable chunks.
+    sentences = re.split(
+        r"(?<=[.!?])\s+",
+        script,
+    )
+
+    sentences = [
+        clean_text(x)
+        for x in sentences
+        if clean_text(x)
+    ]
+
+    chunks = []
+
+    current = ""
+
+    for sentence in sentences:
+        if (
+            len(current)
+            + len(sentence)
+            + 1
+            <= 180
+        ):
+            current = (
+                current + " " + sentence
+            ).strip()
+        else:
+            if current:
+                chunks.append(current)
+
+            current = sentence
+
+    if current:
+        chunks.append(current)
+
+    if not chunks:
+        return False
+
+    temp_files = []
+
+    try:
+        for index, chunk in enumerate(
+            chunks
+        ):
+            url = (
+                "https://translate.google.com/"
+                "translate_tts"
+                "?ie=UTF-8"
+                "&client=tw-ob"
+                "&tl=el"
+                f"&q={quote(chunk, safe='')}"
+            )
+
+            response = requests.get(
+                url,
+                timeout=20,
+                headers={
+                    "User-Agent":
+                        "Mozilla/5.0"
+                },
+            )
+
+            response.raise_for_status()
+
+            if len(response.content) < 1000:
+                continue
+
+            temp_path = (
+                Path(output_path).parent
+                / (
+                    Path(output_path).stem
+                    + f"_part_{index}.mp3"
+                )
+            )
+
+            with open(
+                temp_path,
+                "wb",
+            ) as file:
+                file.write(
+                    response.content
+                )
+
+            temp_files.append(
+                str(temp_path)
+            )
+
+        if not temp_files:
+            return False
+
+        ffmpeg = find_ffmpeg()
+
+        if not ffmpeg:
+            # Use first chunk if ffmpeg is unavailable.
+            os.replace(
+                temp_files[0],
+                output_path,
+            )
+
+            for file in temp_files[1:]:
+                try:
+                    os.remove(file)
+                except Exception:
+                    pass
+
+            return True
+
+        concat_file = (
+            Path(output_path).parent
+            / (
+                Path(output_path).stem
+                + "_concat.txt"
+            )
+        )
+
+        with open(
+            concat_file,
+            "w",
+            encoding="utf-8",
+        ) as file:
+            for item in temp_files:
+                file.write(
+                    "file '"
+                    + item.replace(
+                        "'",
+                        "'\\''",
+                    )
+                    + "'\n"
+                )
+
+        command = [
+            ffmpeg,
+            "-y",
+            "-f",
+            "concat",
+            "-safe",
+            "0",
+            "-i",
+            str(concat_file),
+            "-c:a",
+            "mp3",
+            "-b:a",
+            "128k",
+            str(output_path),
+        ]
+
+        result = subprocess.run(
+            command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=120,
+        )
+
+        if result.returncode != 0:
+            return False
+
+        return os.path.exists(
+            output_path
+        )
+
+    except Exception as exc:
+        print(
+            f"[MONEY AI] Voice-over unavailable: {exc}",
+            flush=True,
+        )
+
+        return False
+
+    finally:
+        for file in temp_files:
+            try:
+                if os.path.exists(file):
+                    os.remove(file)
+            except Exception:
+                pass
+
+        try:
+            if os.path.exists(
+                concat_file
+            ):
+                os.remove(
+                    concat_file
+                )
+        except Exception:
+            pass
+
+
+def attach_audio(
+    video_path,
+    audio_path,
 ):
-    scene_type = scene["type"]
-    headline = clean_text(
-        scene.get("headline")
-    )
-    body = clean_text(
-        scene.get("body")
-    )
+    if not os.path.exists(
+        audio_path
+    ):
+        return video_path
 
-    background = make_visual_background(
-        source_image,
-        progress,
-    )
+    ffmpeg = find_ffmpeg()
 
-    background = add_bottom_gradient(
-        background
-    )
+    if not ffmpeg:
+        print(
+            "[MONEY AI] FFmpeg unavailable; "
+            "keeping video without audio.",
+            flush=True,
+        )
 
-    add_glow(
-        background,
-        int(W * 0.82),
-        int(H * 0.20),
-        170,
+        return video_path
+
+    temp_output = (
+        str(video_path)
+        + ".muxed.mp4"
     )
 
-    draw = ImageDraw.Draw(
-        background
-    )
+    command = [
+        ffmpeg,
+        "-y",
+        "-i",
+        str(video_path),
+        "-i",
+        str(audio_path),
+        "-map",
+        "0:v:0",
+        "-map",
+        "1:a:0",
+        "-c:v",
+        "copy",
+        "-c:a",
+        "aac",
+        "-b:a",
+        "128k",
+        "-shortest",
+        temp_output,
+    ]
 
-    draw_brand(draw)
-
-    if scene_type == "HOOK":
-        draw.rounded_rectangle(
-            (
-                28,
-                145,
-                205,
-                190,
-            ),
-            radius=22,
-            fill=(255, 255, 255),
+    try:
+        result = subprocess.run(
+            command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=120,
         )
 
-        draw.text(
-            (48, 154),
-            "WATCH THIS",
-            font=FONT_SMALL,
-            fill=(10, 12, 18),
-        )
-
-        draw_center_text(
-            draw,
-            headline,
-            250,
-            FONT_BIG,
-            W - 70,
-        )
-
-        draw_center_text(
-            draw,
-            "Here is what actually matters.",
-            640,
-            FONT_BODY,
-            W - 90,
-        )
-
-    elif scene_type == "STORY":
-        draw.text(
-            (28, 150),
-            "THE STORY",
-            font=FONT_SMALL,
-            fill=(185, 190, 205),
-        )
-
-        draw_center_text(
-            draw,
-            headline,
-            205,
-            FONT_TITLE,
-            W - 70,
-        )
-
-        if body:
-            box_y = 510
-
-            draw.rounded_rectangle(
-                (
-                    30,
-                    box_y,
-                    W - 30,
-                    730,
-                ),
-                radius=24,
-                fill=(10, 12, 18, 225),
-                outline=(100, 110, 135),
-                width=2,
+        if result.returncode != 0:
+            print(
+                "[MONEY AI] Audio mux failed",
+                flush=True,
             )
 
-            lines = wrap_text(
-                draw,
-                body,
-                FONT_BODY,
-                W - 90,
-            )
+            return video_path
 
-            y = box_y + 35
-
-            for line in lines[:5]:
-                draw.text(
-                    (50, y),
-                    line,
-                    font=FONT_BODY,
-                    fill=(245, 246, 250),
-                )
-
-                y += 43
-
-    elif scene_type == "WHY":
-        draw.text(
-            (28, 150),
-            "WHY IT MATTERS",
-            font=FONT_SMALL,
-            fill=(185, 190, 205),
+        os.replace(
+            temp_output,
+            video_path,
         )
 
-        draw_center_text(
-            draw,
-            headline,
-            215,
-            FONT_TITLE,
-            W - 70,
+        return video_path
+
+    except Exception as exc:
+        print(
+            f"[MONEY AI] Audio mux error: {exc}",
+            flush=True,
         )
 
-        if body:
-            draw.rounded_rectangle(
-                (
-                    30,
-                    555,
-                    W - 30,
-                    760,
-                ),
-                radius=24,
-                fill=(15, 18, 27, 230),
-                outline=(100, 110, 135),
-                width=2,
-            )
+        return video_path
 
-            draw.text(
-                (52, 585),
-                "KEY POINT",
-                font=FONT_SMALL,
-                fill=(165, 180, 255),
-            )
 
-            lines = wrap_text(
-                draw,
-                body,
-                FONT_BODY,
-                W - 100,
-            )
-
-            y = 630
-
-            for line in lines[:4]:
-                draw.text(
-                    (52, y),
-                    line,
-                    font=FONT_BODY,
-                    fill=(255, 255, 255),
-                )
-
-                y += 42
-
-    elif scene_type == "TAKEAWAY":
-        draw.text(
-            (28, 150),
-            "THE TAKEAWAY",
-            font=FONT_SMALL,
-            fill=(185, 190, 205),
-        )
-
-        draw_center_text(
-            draw,
-            headline,
-            245,
-            FONT_BIG,
-            W - 70,
-        )
-
-        if body:
-            draw.rounded_rectangle(
-                (
-                    30,
-                    585,
-                    W - 30,
-                    790,
-                ),
-                radius=24,
-                fill=(255, 255, 255),
-            )
-
-            lines = wrap_text(
-                draw,
-                body,
-                FONT_BODY,
-                W - 95,
-            )
-
-            y = 625
-
-            for line in lines[:4]:
-                draw.text(
-                    (52, y),
-                    line,
-                    font=FONT_BODY,
-                    fill=(12, 14, 20),
-                )
-
-                y += 43
-
-    elif scene_type == "SOURCE":
-        draw.text(
-            (28, 150),
-            "SOURCE",
-            font=FONT_SMALL,
-            fill=(185, 190, 205),
-        )
-
-        draw_center_text(
-            draw,
-            headline,
-            230,
-            FONT_TITLE,
-            W - 70,
-        )
-
-        draw.rounded_rectangle(
-            (
-                32,
-                510,
-                W - 32,
-                720,
-            ),
-            radius=26,
-            fill=(12, 15, 22, 235),
-            outline=(90, 100, 125),
-            width=2,
-        )
-
-        draw.text(
-            (58, 545),
-            "ORIGINAL STORY",
-            font=FONT_SMALL,
-            fill=(165, 180, 255),
-        )
-
-        lines = wrap_text(
-            draw,
-            body,
-            FONT_BODY,
-            W - 115,
-        )
-
-        y = 600
-
-        for line in lines[:4]:
-            draw.text(
-                (58, y),
-                line,
-                font=FONT_BODY,
-                fill=(245, 246, 250),
-            )
-
-            y += 42
-
-        draw.text(
-            (32, 805),
-            "MONEY AI",
-            font=FONT_LABEL,
-            fill=(255, 255, 255),
-        )
-
-        draw.text(
-            (32, 842),
-            "Facts first. Hype second.",
-            font=FONT_SMALL,
-            fill=(185, 190, 205),
-        )
-
-    draw_progress(
-        draw,
-        global_progress,
-    )
-
-    return np.asarray(
-        background.convert("RGB")
-    )
-
+# ============================================================
+# MAIN RENDER
+# ============================================================
 
 def render_video(
     hook,
@@ -831,16 +1129,20 @@ def render_video(
     job_id,
     source=None,
 ):
-    path = (
+    source = source or {}
+
+    output_path = (
         VIDEO_DIR
         / f"money_ai_{job_id}.mp4"
     )
 
-    source = source or {}
+    audio_path = (
+        VIDEO_DIR
+        / f"money_ai_{job_id}.mp3"
+    )
 
-    image_url = (
+    source_image = download_source_image(
         source.get("image_url")
-        or ""
     )
 
     source_name = clean_text(
@@ -853,27 +1155,6 @@ def render_video(
         source.get("title")
         or ""
     )
-
-    print(
-        f"[MONEY AI] Loading source visual: {image_url}",
-        flush=True,
-    )
-
-    source_image = load_remote_image(
-        image_url
-    )
-
-    if source_image:
-        print(
-            "[MONEY AI] Source visual loaded",
-            flush=True,
-        )
-    else:
-        print(
-            "[MONEY AI] No usable source visual; "
-            "using generated background",
-            flush=True,
-        )
 
     parts = split_script(
         script
@@ -919,9 +1200,7 @@ def render_video(
     scenes.append(
         {
             "type": "TAKEAWAY",
-            "headline": (
-                "What should you remember?"
-            ),
+            "headline": "Κράτα αυτό.",
             "body": clean_text(
                 caption
             ),
@@ -932,40 +1211,32 @@ def render_video(
     scenes.append(
         {
             "type": "SOURCE",
-            "headline": (
-                source_name
-                or "Original source"
-            ),
+            "headline": source_name,
             "body": (
                 source_title
-                or "Follow the original story "
-                "for the full context."
+                or "Δες την αρχική πηγή "
+                "για ολόκληρο το context."
             ),
             "seconds": 3,
         }
     )
 
-    total_seconds = sum(
-        scene["seconds"]
+    total_frames = sum(
+        int(
+            scene["seconds"]
+            * FPS
+        )
         for scene in scenes
     )
 
-    total_frames = max(
-        1,
-        int(
-            total_seconds * FPS
-        ),
-    )
-
     print(
-        f"[MONEY AI] Rendering "
-        f"{total_seconds}s video "
-        f"at {W}x{H}/{FPS}fps",
+        f"[MONEY AI] Rendering final video "
+        f"{W}x{H} @ {FPS}fps",
         flush=True,
     )
 
     writer = imageio.get_writer(
-        str(path),
+        str(output_path),
         fps=FPS,
         codec="libx264",
         quality=5,
@@ -978,6 +1249,11 @@ def render_video(
         for scene_index, scene in enumerate(
             scenes
         ):
+            frame_count = int(
+                scene["seconds"]
+                * FPS
+            )
+
             print(
                 f"[MONEY AI] Scene "
                 f"{scene_index + 1}/"
@@ -986,16 +1262,11 @@ def render_video(
                 flush=True,
             )
 
-            frame_count = int(
-                scene["seconds"]
-                * FPS
-            )
-
-            for local_frame in range(
+            for frame_number in range(
                 frame_count
             ):
                 local_progress = (
-                    local_frame
+                    frame_number
                     / max(
                         1,
                         frame_count - 1,
@@ -1010,11 +1281,11 @@ def render_video(
                     )
                 )
 
-                frame = scene_frame(
-                    scene=scene,
-                    source_image=source_image,
-                    progress=local_progress,
-                    global_progress=global_progress,
+                frame = render_scene(
+                    scene,
+                    source_image,
+                    local_progress,
+                    global_progress,
                 )
 
                 writer.append_data(
@@ -1027,8 +1298,33 @@ def render_video(
         writer.close()
 
     print(
-        f"[MONEY AI] Video ready: {path}",
+        f"[MONEY AI] Visual video ready: "
+        f"{output_path}",
         flush=True,
     )
 
-    return str(path)
+    # Voice-over is optional.
+    # A failure here must NEVER destroy the video.
+    if create_voiceover(
+        script,
+        audio_path,
+    ):
+        attach_audio(
+            output_path,
+            audio_path,
+        )
+
+        try:
+            os.remove(
+                audio_path
+            )
+        except Exception:
+            pass
+
+    print(
+        f"[MONEY AI] FINAL VIDEO: "
+        f"{output_path}",
+        flush=True,
+    )
+
+    return str(output_path)
