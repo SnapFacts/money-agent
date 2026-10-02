@@ -7,43 +7,18 @@ DB_PATH = os.getenv("MONEY_AI_DB", "money_ai.db")
 
 connect = lambda: sqlite3.connect(DB_PATH)
 
-def init_db():
-c = connect()
-c.execute("CREATE TABLE IF NOT EXISTS content_jobs (id INTEGER PRIMARY KEY AUTOINCREMENT, topic TEXT NOT NULL, content_json TEXT NOT NULL, status TEXT NOT NULL, created_at TEXT NOT NULL)")
-c.commit()
-c.close()
+def_dummy = None
 
-def create_content_job(topic, content):
-c = connect()
-cur = c.execute("INSERT INTO content_jobs(topic, content_json, status, created_at) VALUES (?, ?, ?, ?)", (topic, json.dumps(content, ensure_ascii=False), "content_ready", datetime.now(timezone.utc).isoformat()))
-c.commit()
-job_id = cur.lastrowid
-c.close()
-return job_id
+def_exec = lambda sql, args=(): (lambda c: (c.execute(sql, args), c.commit(), c.close()))(connect())
 
-def update_job_status(job_id, status):
-c = connect()
-c.execute("UPDATE content_jobs SET status=? WHERE id=?", (status, job_id))
-c.commit()
-c.close()
+init_db = lambda: def_exec("CREATE TABLE IF NOT EXISTS content_jobs (id INTEGER PRIMARY KEY AUTOINCREMENT, topic TEXT NOT NULL, content_json TEXT NOT NULL, status TEXT NOT NULL, created_at TEXT NOT NULL)")
 
-def get_job(job_id):
-c = connect()
-row = c.execute("SELECT * FROM content_jobs WHERE id=?", (job_id,)).fetchone()
-c.close()
-if not row:
-return None
-d = dict(zip(["id", "topic", "content_json", "status", "created_at"], row))
-d["content"] = json.loads(d.pop("content_json"))
-return d
+create_content_job = lambda topic, content: (lambda c: (lambda cur: (c.commit(), cur.lastrowid, c.close())[1])(c.execute("INSERT INTO content_jobs(topic, content_json, status, created_at) VALUES (?, ?, ?, ?)", (topic, json.dumps(content, ensure_ascii=False), "content_ready", datetime.now(timezone.utc).isoformat()))))(connect())
 
-def list_jobs(limit=50):
-c = connect()
-rows = c.execute("SELECT * FROM content_jobs ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
-c.close()
-out = []
-for row in rows:
-d = dict(zip(["id", "topic", "content_json", "status", "created_at"], row))
-d["content"] = json.loads(d.pop("content_json"))
-out.append(d)
-return out
+update_job_status = lambda job_id, status: (lambda c: (c.execute("UPDATE content_jobs SET status=? WHERE id=?", (status, job_id)), c.commit(), c.close()))(connect())
+
+get_job = lambda job_id: (lambda c: (lambda row: (c.close(), None if not row else dict(zip(["id", "topic", "content_json", "status", "created_at"], row))))(c.execute("SELECT * FROM content_jobs WHERE id=?", (job_id,)).fetchone()))(connect())
+
+list_jobs = lambda limit=50: (lambda c: (lambda rows: (c.close(), [dict(zip(["id", "topic", "content_json", "status", "created_at"], row)) for row in rows][1]))(c.execute("SELECT * FROM content_jobs ORDER BY id DESC LIMIT ?", (limit,)).fetchall()))(connect())
+
+init_db()
