@@ -75,12 +75,15 @@ def render_job_background(job_id, content):
     try:
         update_job_status(job_id, "rendering")
 
+        source = content.get("source") or {}
+
         output = render_video(
-            content["hook"],
-            content["script"],
-            content["caption"],
-            content["hashtags"],
-            job_id,
+            hook=content.get("hook", ""),
+            script=content.get("script", ""),
+            caption=content.get("caption", ""),
+            hashtags=content.get("hashtags", []),
+            job_id=job_id,
+            source=source,
         )
 
         update_job_status(job_id, "video_ready")
@@ -122,7 +125,10 @@ def api_generate():
             published_at=published_at,
         )
 
-        job_id = create_content_job(topic, content)
+        job_id = create_content_job(
+            topic,
+            content,
+        )
 
         thread = threading.Thread(
             target=render_job_background,
@@ -197,9 +203,13 @@ def tiktok_login():
     state = state_serializer.dumps(raw_state)
     session["tiktok_oauth_state"] = state
 
-    result = tiktok.create_authorization_url(state=state)
+    result = tiktok.create_authorization_url(
+        state=state
+    )
 
-    return redirect(result["authorization_url"])
+    return redirect(
+        result["authorization_url"]
+    )
 
 
 @app.get("/tiktok/callback")
@@ -210,7 +220,9 @@ def tiktok_callback():
         return {
             "status": "error",
             "error": error,
-            "description": request.args.get("error_description"),
+            "description": request.args.get(
+                "error_description"
+            ),
         }, 400
 
     state = request.args.get("state")
@@ -222,7 +234,10 @@ def tiktok_callback():
         }, 400
 
     try:
-        state_serializer.loads(state, max_age=600)
+        state_serializer.loads(
+            state,
+            max_age=600,
+        )
 
     except SignatureExpired:
         return {
@@ -245,14 +260,25 @@ def tiktok_callback():
         }, 400
 
     try:
-        token_data = tiktok.exchange_code_for_token(code)
+        token_data = (
+            tiktok.exchange_code_for_token(
+                code
+            )
+        )
 
-        session.pop("tiktok_oauth_state", None)
+        session.pop(
+            "tiktok_oauth_state",
+            None,
+        )
 
-        access_token = token_data.get("access_token")
+        access_token = token_data.get(
+            "access_token"
+        )
 
         user_data = (
-            tiktok.get_user_info(access_token)
+            tiktok.get_user_info(
+                access_token
+            )
             if access_token
             else None
         )
@@ -261,7 +287,9 @@ def tiktok_callback():
             "status": "connected",
             "message": "TikTok authorization completed.",
             "user": user_data,
-            "token_received": bool(access_token),
+            "token_received": bool(
+                access_token
+            ),
             "scope": token_data.get("scope"),
         }
 
@@ -276,6 +304,8 @@ def tiktok_callback():
 if __name__ == "__main__":
     app.run(
         host="0.0.0.0",
-        port=int(os.getenv("PORT", "5000")),
+        port=int(
+            os.getenv("PORT", "5000")
+        ),
         debug=False,
     )
