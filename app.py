@@ -1,14 +1,32 @@
 import os
 import secrets
+import threading
+from pathlib import Path
 
-from flask import Flask, redirect, request, session, send_from_directory, render_template, jsonify
+from flask import (
+    Flask,
+    redirect,
+    request,
+    session,
+    send_from_directory,
+    render_template,
+    jsonify,
+)
+
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 
 from engine.tiktok_connector import TikTokConnector
-from engine.db import init_db, create_content_job, list_jobs, get_job, update_job_status
+from engine.db import (
+    init_db,
+    create_content_job,
+    list_jobs,
+    get_job,
+    update_job_status,
+)
 from engine.content_engine import generate_content
 from engine.video_engine import render_video
 from engine.trend_engine import get_trend_candidates
+
 
 app = Flask(__name__)
 app.secret_key = os.environ["MONEY_AI_SECRET_KEY"]
@@ -53,6 +71,29 @@ def api_jobs():
     return jsonify(list_jobs())
 
 
+def render_job_background(job_id, content):
+    try:
+        update_job_status(job_id, "rendering")
+
+        output = render_video(
+            content["hook"],
+            content["script"],
+            content["caption"],
+            content["hashtags"],
+            job_id,
+        )
+
+        update_job_status(job_id, "video_ready")
+
+    except Exception as exc:
+        print(f"Video rendering failed for job {job_id}: {exc}")
+
+        try:
+            update_job_status(job_id, "error")
+        except Exception:
+            pass
+
+
 @app.post("/api/generate")
 def api_generate():
     payload = request.get_json(silent=True) or {}
@@ -66,33 +107,26 @@ def api_generate():
 
         job_id = create_content_job(topic, content)
 
-        output = render_video(
-            content["hook"],
-            content["script"],
-            content["caption"],
-            content["hashtags"],
-            job_id,
+        thread = threading.Thread(
+            target=render_job_background,
+            args=(job_id, content),
+            daemon=True,
         )
 
-        update_job_status(job_id, "video_ready")
+        thread.start()
 
-        return jsonify({
-            "job_id": job_id,
-            "topic": topic,
-            "content": content,
-            "status": "video_ready",
-            "video": output,
-        })
+        return jsonify(
+            {
+                "job_id": job_id,
+                "topic": topic,
+                "content": content,
+                "status": "rendering",
+            }
+        )
 
     except Exception as exc:
-        try:
-            if "job_id" in locals():
-                update_job_status(job_id, "error")
-        except Exception:
-            pass
-
         return {
-            "error": "Video generation failed.",
+            "error": "Content generation failed.",
             "details": str(exc),
         }, 500
 
@@ -104,30 +138,33 @@ def api_render(job_id):
     if not job:
         return {"error": "job not found"}, 404
 
-    try:
-        output = render_video(
-            job["content"]["hook"],
-            job["content"]["script"],
-            job["content"]["caption"],
-            job["content"]["hashtags"],
-            job_id,
-        )
+    thread = threading.Thread(
+        target=render_job_background,
+        args=(job_id, job["content"]),
+        daemon=True,
+    )
 
-        update_job_status(job_id, "video_ready")
+    thread.start()
 
-        return jsonify({
+    return jsonify(
+        {
             "job_id": job_id,
-            "video": output,
-            "status": "video_ready",
-        })
+            "status": "rendering",
+        }
+    )
 
-    except Exception as exc:
-        update_job_status(job_id, "error")
 
-        return {
-            "error": "Video rendering failed.",
-            "details": str(exc),
-        }, 500
+@app.get("/videos/<path:filename>")
+def serve_video(filename):
+    video_dir = Path(
+        os.getenv("VIDEO_DIR", "generated_videos")
+    )
+
+    return send_from_directory(
+        video_dir,
+        filename,
+        mimetype="video/mp4",
+    )
 
 
 @app.get("/tiktok/login")
@@ -162,11 +199,13 @@ def tiktok_callback():
 
     try:
         state_serializer.loads(state, max_age=600)
+
     except SignatureExpired:
         return {
             "status": "error",
             "message": "OAuth state expired.",
         }, 400
+
     except BadSignature:
         return {
             "status": "error",
