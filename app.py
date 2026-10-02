@@ -1,20 +1,22 @@
-﻿import os
+import os
 import secrets
+from datetime import datetime, timezone
+from flask import Flask, redirect, request, session, send_from_directory, render_template, jsonify
 
-from flask import Flask, redirect, request, session, send_from_directory
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 
 from engine.tiktok_connector import TikTokConnector
-
+from engine.db import init_db, create_content_job, list_jobs, get_job
+from engine.content_engine import generate_content
+from engine.video_engine import render_video
+from engine.trend_engine import get_trend_candidates
 
 app = Flask(__name__)
-
 app.secret_key = os.environ["MONEY_AI_SECRET_KEY"]
-
 state_serializer = URLSafeTimedSerializer(app.secret_key)
-
 tiktok = TikTokConnector()
 
+init_db()
 
 @app.get("/tiktokcM12XuTiIWdyAz7FnURIteP29vho3X9t.txt")
 def tiktok_verification_file():
@@ -24,16 +26,9 @@ def tiktok_verification_file():
         mimetype="text/plain",
     )
 
-
 @app.get("/")
 def home():
-    return """
-    <h1>MONEY AI</h1>
-    <p>Backend is running.</p>
-    <p><a href="/health">Health check</a></p>
-    <p><a href="/tiktok/login">Connect TikTok</a></p>
-    """
-
+    return render_template("dashboard.html")
 
 @app.get("/health")
 def health():
@@ -41,25 +36,60 @@ def health():
         "status": "ok",
         "service": "money-ai",
         "tiktok": tiktok.configuration_status(),
+        "ai_configured": bool(os.getenv("OPENAI_API_KEY")),
     }
 
+@app.get("/api/trends")
+def api_trends():
+    return jsonify(get_trend_candidates())
+
+@app.get("/api/jobs")
+def api_jobs():
+    return jsonify(list_jobs())
+
+@app.post("/api/generate")
+def api_generate():
+    payload = request.get_json(silent=True) or {}
+    topic = (payload.get("topic") or "").strip()
+    if not topic:
+        return {"error": "topic is required"}, 400
+
+    content = generate_content(topic)
+    job_id = create_content_job(topic, content)
+
+    return jsonify({
+        "job_id": job_id,
+        "topic": topic,
+        "content": content,
+        "status": "content_ready",
+    })
+
+@app.post("/api/render/<int:job_id>")
+def api_render(job_id):
+    job = get_job(job_id)
+    if not job:
+        return {"error": "job not found"}, 404
+
+    output = render_video(
+        job["content"]["hook"],
+        job["content"]["script"],
+        job["content"]["caption"],
+        job["content"]["hashtags"],
+        job_id,
+    )
+    return jsonify({"job_id": job_id, "video": output})
 
 @app.get("/tiktok/login")
 def tiktok_login():
     raw_state = secrets.token_urlsafe(32)
     state = state_serializer.dumps(raw_state)
-
     session["tiktok_oauth_state"] = state
-
     result = tiktok.create_authorization_url(state=state)
-
     return redirect(result["authorization_url"])
-
 
 @app.get("/tiktok/callback")
 def tiktok_callback():
     error = request.args.get("error")
-
     if error:
         return {
             "status": "error",
@@ -68,46 +98,25 @@ def tiktok_callback():
         }, 400
 
     state = request.args.get("state")
-
     if not state:
-        return {
-            "status": "error",
-            "message": "No OAuth state was returned.",
-        }, 400
+        return {"status": "error", "message": "No OAuth state was returned."}, 400
 
     try:
         state_serializer.loads(state, max_age=600)
     except SignatureExpired:
-        return {
-            "status": "error",
-            "message": "OAuth state expired. Please try again.",
-        }, 400
+        return {"status": "error", "message": "OAuth state expired."}, 400
     except BadSignature:
-        return {
-            "status": "error",
-            "message": "Invalid OAuth state.",
-        }, 400
+        return {"status": "error", "message": "Invalid OAuth state."}, 400
 
     code = request.args.get("code")
-
     if not code:
-        return {
-            "status": "error",
-            "message": "No authorization code was returned.",
-        }, 400
+        return {"status": "error", "message": "No authorization code was returned."}, 400
 
     try:
         token_data = tiktok.exchange_code_for_token(code)
-
         session.pop("tiktok_oauth_state", None)
-
         access_token = token_data.get("access_token")
-
-        user_data = None
-
-        if access_token:
-            user_data = tiktok.get_user_info(access_token)
-
+        user_data = tiktok.get_user_info(access_token) if access_token else None
         return {
             "status": "connected",
             "message": "TikTok authorization completed.",
@@ -115,7 +124,6 @@ def tiktok_callback():
             "token_received": bool(access_token),
             "scope": token_data.get("scope"),
         }
-
     except Exception as exc:
         return {
             "status": "error",
@@ -123,12 +131,5 @@ def tiktok_callback():
             "error": str(exc),
         }, 500
 
-
 if __name__ == "__main__":
-    port = int(os.getenv("PORT", "5000"))
-
-    app.run(
-        host="0.0.0.0",
-        port=port,
-        debug=False,
-    )
+    app.run(host="0.0.0.0", port=int(os.getenv("PORT", "5000")), debug=False)

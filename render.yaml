@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: money-ai
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn app:app
+  - type: cron
+    name: money-ai-generator
+    runtime: python
+    schedule: "0 */8 * * *"
+    buildCommand: pip install -r requirements.txt
+    startCommand: python worker.py

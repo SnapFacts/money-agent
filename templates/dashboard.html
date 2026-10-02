@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>MONEY AI</title>
+<style>
+body{font-family:Arial,sans-serif;background:#0d0f14;color:#f4f4f5;margin:0}
+main{max-width:1100px;margin:0 auto;padding:32px}
+.card{background:#171a21;border:1px solid #292e39;border-radius:16px;padding:22px;margin:16px 0}
+button{background:#fff;color:#111;border:0;border-radius:10px;padding:11px 16px;cursor:pointer}
+input{background:#0d0f14;color:#fff;border:1px solid #343a46;border-radius:10px;padding:12px;width:70%}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+pre{white-space:pre-wrap}
+.small{color:#a8afbd}
+</style>
+</head>
+<body>
+<main>
+<h1>MONEY AI</h1>
+<p class="small">Automatic trend → content → video pipeline.</p>
+
+<div class="grid">
+<div class="card"><h3>TikTok</h3><p id="tiktok">Checking...</p><a href="/tiktok/login"><button>Connect TikTok</button></a></div>
+<div class="card"><h3>AI</h3><p id="ai">Checking...</p></div>
+<div class="card"><h3>Pipeline</h3><p>Trend discovery, script generation and video rendering are enabled.</p></div>
+</div>
+
+<div class="card">
+<h2>Create a video</h2>
+<input id="topic" placeholder="π.χ. AI εργαλεία που αλλάζουν τη δουλειά">
+<button onclick="generate()">Generate</button>
+<pre id="result"></pre>
+</div>
+
+<div class="card">
+<h2>Trend candidates</h2>
+<div id="trends">Loading...</div>
+</div>
+
+<div class="card">
+<h2>Recent jobs</h2>
+<div id="jobs">Loading...</div>
+</div>
+</main>
+
+<script>
+async function load(){
+ const h=await fetch('/health').then(r=>r.json());
+ document.getElementById('tiktok').textContent=h.tiktok.ready?'Configured':'Not configured';
+ document.getElementById('ai').textContent=h.ai_configured?'OpenAI configured':'Fallback mode — add OPENAI_API_KEY';
+ const t=await fetch('/api/trends').then(r=>r.json());
+ document.getElementById('trends').innerHTML=t.map(x=>`<p>${x.title}</p>`).join('');
+ const j=await fetch('/api/jobs').then(r=>r.json());
+ document.getElementById('jobs').innerHTML=j.map(x=>`<p>#${x.id} — ${x.topic} — ${x.status}</p>`).join('')||'<p>No jobs yet.</p>';
+}
+async function generate(){
+ const topic=document.getElementById('topic').value;
+ const r=await fetch('/api/generate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({topic})});
+ const data=await r.json();
+ document.getElementById('result').textContent=JSON.stringify(data,null,2);
+ load();
+}
+load();
+</script>
+</body>
+</html>
