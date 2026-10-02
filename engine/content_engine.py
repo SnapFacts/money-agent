@@ -4,47 +4,94 @@ from openai import OpenAI
 
 SYSTEM = """
 You are MONEY AI, an expert short-form video content producer.
+
 Return ONLY valid JSON with exactly these keys:
 hook, script, caption, hashtags, visual_plan.
-Create a punchy vertical-video concept. Keep the script concise enough for about
-30-45 seconds. Hashtags must be an array of strings. visual_plan must be an array
-of short scene descriptions. Do not claim facts you cannot support. If a topic is
-uncertain or current, phrase it cautiously.
+
+Create a factual, engaging 30-45 second vertical-video concept.
+
+Rules:
+- Never invent facts, statistics, quotes, events or people.
+- If the topic is uncertain, say so.
+- Use simple spoken language.
+- The hook must grab attention without clickbait lies.
+- The script must contain useful information, not generic filler.
+- End with a clear takeaway.
+- hashtags must be an array of strings.
+- visual_plan must be an array of 5-7 concrete scene descriptions.
 """
 
-def fallback(topic):
+def demo_content(topic):
+    topic = topic.strip()
+
     return {
-        "hook": f"Το θέμα που συζητούν όλοι: {topic}",
+        "hook": f"Αξίζει πραγματικά την προσοχή σου το «{topic}»; Να τι πρέπει να ξέρεις.",
         "script": (
-            f"Σε 30 δευτερόλεπτα, αυτό είναι που πρέπει να ξέρεις για {topic}. "
-            "Ξεκίνα με το βασικό γεγονός, εξήγησε γιατί έχει σημασία και κλείσε "
-            "με μία καθαρή takeaway πρόταση."
+            f"Ας το δούμε απλά. Το θέμα είναι: {topic}. "
+            "Πριν βγάλεις συμπέρασμα, ξεχώρισε τι είναι επιβεβαιωμένο "
+            "από αυτό που είναι απλώς ισχυρισμός ή πρόβλεψη. "
+            "Το σημαντικό είναι να καταλάβεις τι αλλάζει στην πράξη "
+            "και ποιο είναι το βασικό συμπέρασμα. "
+            "Κράτα λοιπόν τα δεδομένα και όχι τον θόρυβο."
         ),
-        "caption": f"Αυτό είναι το βασικό που πρέπει να ξέρεις για {topic}.",
-        "hashtags": ["#fyp", "#viral", "#moneyai"],
-        "visual_plan": ["bold hook", "3 key points", "final takeaway"],
-    }
+        "caption": (
+            f"Τι πρέπει πραγματικά να ξέρεις για: {topic}. "
+            "Χωρίς υπερβολές και χωρίς να παρουσιάζουμε εικασίες ως γεγονότα."
+        ),
+        "hashtags": [
+            "#moneyai",
+            "#ai",
+            "#technology",
+            "#news",
+            "#explained"
+        ],
+        "visual_plan": [
+            f"Title card με το θέμα: {topic}",
+            "Μεγάλο kinetic-text hook στην οθόνη",
+            "Απλό visual που παρουσιάζει το βασικό θέμα",
+            "Κείμενο στην οθόνη: Τι γνωρίζουμε",
+            "Κείμενο στην οθόνη: Τι δεν γνωρίζουμε",
+            "Σύντομο visual με το βασικό takeaway",
+            "End card με MONEY AI"
+        ],
+    )
+
 
 def generate_content(topic):
+    topic = (topic or "").strip()
+
+    if not topic:
+        raise ValueError("Topic is required")
+
     api_key = os.getenv("OPENAI_API_KEY")
+
+    # Free demo mode.
+    # If there is no API credit/key, the pipeline still produces
+    # a complete demo content package.
     if not api_key:
-        return fallback(topic)
+        return demo_content(topic)
 
-    client = OpenAI(api_key=api_key)
-    response = client.responses.create(
-        model=os.getenv("OPENAI_MODEL", "gpt-6-luna"),
-        instructions=SYSTEM,
-        input=f"Topic: {topic}",
-    )
-    text = response.output_text.strip()
     try:
-        data = json.loads(text)
-    except json.JSONDecodeError:
-        return fallback(topic)
+        client = OpenAI(api_key=api_key)
 
-    data.setdefault("hook", topic)
-    data.setdefault("script", "")
-    data.setdefault("caption", "")
-    data.setdefault("hashtags", [])
-    data.setdefault("visual_plan", [])
-    return data
+        response = client.responses.create(
+            model=os.getenv("OPENAI_MODEL", "gpt-6-luna"),
+            instructions=SYSTEM,
+            input=f"Topic: {topic}",
+        )
+
+        text = response.output_text.strip()
+        data = json.loads(text)
+
+        data.setdefault("hook", topic)
+        data.setdefault("script", "")
+        data.setdefault("caption", "")
+        data.setdefault("hashtags", [])
+        data.setdefault("visual_plan", [])
+
+        return data
+
+    except Exception:
+        # If the API is unavailable or has no credits,
+        # automatically use the free demo generator.
+        return demo_content(topic)
