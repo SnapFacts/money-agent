@@ -21,6 +21,7 @@ Rules:
 - visual_plan must be an array of 5-7 concrete scene descriptions.
 """
 
+
 def demo_content(topic):
     topic = topic.strip()
 
@@ -53,8 +54,8 @@ def demo_content(topic):
             "Κείμενο στην οθόνη: Τι δεν γνωρίζουμε",
             "Σύντομο visual με το βασικό takeaway",
             "End card με MONEY AI"
-        ],
-    )
+        ]
+    }
 
 
 def generate_content(topic):
@@ -65,9 +66,7 @@ def generate_content(topic):
 
     api_key = os.getenv("OPENAI_API_KEY")
 
-    # Free demo mode.
-    # If there is no API credit/key, the pipeline still produces
-    # a complete demo content package.
+    # Free demo mode when no API key is available.
     if not api_key:
         return demo_content(topic)
 
@@ -92,6 +91,6 @@ def generate_content(topic):
         return data
 
     except Exception:
-        # If the API is unavailable or has no credits,
-        # automatically use the free demo generator.
+        # If the API has no credits or is unavailable,
+        # continue using the free demo generator.
         return demo_content(topic)
