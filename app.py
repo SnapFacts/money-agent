@@ -1,29 +1,14 @@
-```python
 import os
 import secrets
-from flask import (
-    Flask,
-    redirect,
-    request,
-    session,
-    send_from_directory,
-    render_template,
-    jsonify,
-)
+
+from flask import Flask, redirect, request, session, send_from_directory, render_template, jsonify
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 
 from engine.tiktok_connector import TikTokConnector
-from engine.db import (
-    init_db,
-    create_content_job,
-    list_jobs,
-    get_job,
-    update_job_status,
-)
+from engine.db import init_db, create_content_job, list_jobs, get_job, update_job_status
 from engine.content_engine import generate_content
 from engine.video_engine import render_video
 from engine.trend_engine import get_trend_candidates
-
 
 app = Flask(__name__)
 app.secret_key = os.environ["MONEY_AI_SECRET_KEY"]
@@ -77,13 +62,10 @@ def api_generate():
         return {"error": "topic is required"}, 400
 
     try:
-        # Step 1: Generate content.
         content = generate_content(topic)
 
-        # Step 2: Create database job.
         job_id = create_content_job(topic, content)
 
-        # Step 3: Render the actual MP4.
         output = render_video(
             content["hook"],
             content["script"],
@@ -92,7 +74,6 @@ def api_generate():
             job_id,
         )
 
-        # Step 4: Mark job as rendered.
         update_job_status(job_id, "video_ready")
 
         return jsonify({
@@ -104,7 +85,6 @@ def api_generate():
         })
 
     except Exception as exc:
-        # Keep the job visible if rendering fails.
         try:
             if "job_id" in locals():
                 update_job_status(job_id, "error")
@@ -117,7 +97,7 @@ def api_generate():
         }, 500
 
 
-@app.post("/api/render/<int:job_id>")
+@app.post("/api/render/<int:job_id")
 def api_render(job_id):
     job = get_job(job_id)
 
@@ -182,13 +162,11 @@ def tiktok_callback():
 
     try:
         state_serializer.loads(state, max_age=600)
-
     except SignatureExpired:
         return {
             "status": "error",
             "message": "OAuth state expired.",
         }, 400
-
     except BadSignature:
         return {
             "status": "error",
@@ -209,6 +187,7 @@ def tiktok_callback():
         session.pop("tiktok_oauth_state", None)
 
         access_token = token_data.get("access_token")
+
         user_data = (
             tiktok.get_user_info(access_token)
             if access_token
@@ -237,4 +216,3 @@ if __name__ == "__main__":
         port=int(os.getenv("PORT", "5000")),
         debug=False,
     )
-```
