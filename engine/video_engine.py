@@ -1,13 +1,16 @@
 import os
 from pathlib import Path
+
 from PIL import Image, ImageDraw, ImageFont
 import imageio.v2 as imageio
+import numpy as np
+
 
 VIDEO_DIR = Path(os.getenv("VIDEO_DIR", "generated_videos"))
 VIDEO_DIR.mkdir(parents=True, exist_ok=True)
 
-W, H = 540, 960
-FPS = 15
+W, H = 360, 640
+FPS = 10
 
 
 def font(size):
@@ -16,9 +19,9 @@ def font(size):
         "C:/Windows/Fonts/arialbd.ttf",
     ]
 
-    for p in candidates:
-        if os.path.exists(p):
-            return ImageFont.truetype(p, size)
+    for path in candidates:
+        if os.path.exists(path):
+            return ImageFont.truetype(path, size)
 
     return ImageFont.load_default()
 
@@ -45,82 +48,98 @@ def wrap(draw, text, fnt, max_width):
     return lines
 
 
+def make_frame(label, text):
+    img = Image.new(
+        "RGB",
+        (W, H),
+        (18, 18, 22),
+    )
+
+    draw = ImageDraw.Draw(img)
+
+    f_label = font(18)
+    f_title = font(30)
+
+    draw.text(
+        (20, 25),
+        label,
+        font=f_label,
+        fill=(220, 220, 220),
+    )
+
+    lines = wrap(
+        draw,
+        text,
+        f_title,
+        W - 40,
+    )
+
+    total_height = len(lines) * 42
+    y = max(100, (H - total_height) // 2)
+
+    for line in lines:
+        bbox = draw.textbbox(
+            (0, 0),
+            line,
+            font=f_title,
+        )
+
+        text_width = bbox[2] - bbox[0]
+
+        draw.text(
+            ((W - text_width) / 2, y),
+            line,
+            font=f_title,
+            fill=(255, 255, 255),
+        )
+
+        y += 42
+
+    return np.asarray(img)
+
+
 def render_video(hook, script, caption, hashtags, job_id):
     path = VIDEO_DIR / f"money_ai_{job_id}.mp4"
 
-    f_hook = font(42)
-    f_body = font(28)
-    f_small = font(22)
+    print(
+        f"[MONEY AI] Starting video render for job {job_id}",
+        flush=True,
+    )
 
     scenes = [
-        ("HOOK", hook),
-        ("STORY", script),
-        ("TAKEAWAY", caption),
-        ("TAGS", " ".join(hashtags)),
+        ("HOOK", hook, 2),
+        ("STORY", script, 3),
+        ("TAKEAWAY", caption, 3),
+        ("TAGS", " ".join(hashtags), 2),
     ]
 
     writer = imageio.get_writer(
         str(path),
         fps=FPS,
         codec="libx264",
-        quality=5,
+        quality=3,
         macro_block_size=None,
     )
 
     try:
-        for label, text in scenes:
-            frame_count = FPS * (3 if label == "HOOK" else 5)
+        for label, text, seconds in scenes:
+            print(
+                f"[MONEY AI] Rendering scene: {label}",
+                flush=True,
+            )
+
+            frame = make_frame(label, text)
+            frame_count = FPS * seconds
 
             for _ in range(frame_count):
-                img = Image.new(
-                    "RGB",
-                    (W, H),
-                    (18, 18, 22),
-                )
-
-                draw = ImageDraw.Draw(img)
-
-                draw.text(
-                    (35, 50),
-                    label,
-                    font=f_small,
-                    fill=(220, 220, 220),
-                )
-
-                fnt = f_hook if label == "HOOK" else f_body
-
-                lines = wrap(
-                    draw,
-                    text,
-                    fnt,
-                    W - 70,
-                )
-
-                y = 250
-
-                for line in lines:
-                    bbox = draw.textbbox(
-                        (0, 0),
-                        line,
-                        font=fnt,
-                    )
-
-                    tw = bbox[2] - bbox[0]
-
-                    draw.text(
-                        ((W - tw) / 2, y),
-                        line,
-                        font=fnt,
-                        fill=(255, 255, 255),
-                    )
-
-                    y += fnt.size + 15
-
-                writer.append_data(
-                    __import__("numpy").array(img)
-                )
+                writer.append_data(frame)
 
     finally:
         writer.close()
+
+    print(
+        f"[MONEY AI] Video ready: {path}",
+        flush=True,
+    )
 
     return str(path)
