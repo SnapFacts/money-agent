@@ -1,6 +1,7 @@
 import json
 import os
 import re
+import html
 import requests
 
 from openai import OpenAI
@@ -32,8 +33,50 @@ def clean_text(text):
     if not text:
         return ""
 
+    text = html.unescape(str(text))
     text = re.sub(r"\s+", " ", text)
+
     return text.strip()
+
+
+def extract_meta(html_text, attribute, value):
+    pattern = (
+        r'<meta[^>]+'
+        + attribute
+        + r'=["\']'
+        + re.escape(value)
+        + r'["\'][^>]+'
+        r'content=["\']([^"\']+)'
+    )
+
+    match = re.search(
+        pattern,
+        html_text,
+        re.IGNORECASE,
+    )
+
+    if match:
+        return clean_text(match.group(1))
+
+    reverse_pattern = (
+        r'<meta[^>]+'
+        r'content=["\']([^"\']+)["\'][^>]+'
+        + attribute
+        + r'=["\']'
+        + re.escape(value)
+        + r'["\']'
+    )
+
+    match = re.search(
+        reverse_pattern,
+        html_text,
+        re.IGNORECASE,
+    )
+
+    if match:
+        return clean_text(match.group(1))
+
+    return ""
 
 
 def fetch_source(url):
@@ -43,117 +86,180 @@ def fetch_source(url):
     try:
         response = requests.get(
             url,
-            timeout=12,
+            timeout=15,
             headers={
-                "User-Agent": "Mozilla/5.0 MONEY-AI/1.0"
+                "User-Agent": (
+                    "Mozilla/5.0 "
+                    "(compatible; MONEY-AI/1.0)"
+                )
             },
         )
 
         response.raise_for_status()
 
-        html = response.text
+        html_text = response.text
 
         title = ""
         description = ""
+        image_url = ""
+        site_name = ""
 
-        title_match = re.search(
-            r'<meta[^>]+property=["\']og:title["\'][^>]+content=["\']([^"\']+)',
-            html,
-            re.IGNORECASE,
+        title = extract_meta(
+            html_text,
+            "property",
+            "og:title",
         )
 
-        if title_match:
-            title = clean_text(title_match.group(1))
-
-        description_match = re.search(
-            r'<meta[^>]+property=["\']og:description["\'][^>]+content=["\']([^"\']+)',
-            html,
-            re.IGNORECASE,
+        description = extract_meta(
+            html_text,
+            "property",
+            "og:description",
         )
 
-        if description_match:
-            description = clean_text(description_match.group(1))
+        image_url = extract_meta(
+            html_text,
+            "property",
+            "og:image",
+        )
+
+        site_name = extract_meta(
+            html_text,
+            "property",
+            "og:site_name",
+        )
+
+        if not title:
+            title = extract_meta(
+                html_text,
+                "name",
+                "twitter:title",
+            )
+
+        if not description:
+            description = extract_meta(
+                html_text,
+                "name",
+                "description",
+            )
+
+        if not image_url:
+            image_url = extract_meta(
+                html_text,
+                "name",
+                "twitter:image",
+            )
 
         if not title:
             title_match = re.search(
                 r"<title[^>]*>(.*?)</title>",
-                html,
+                html_text,
                 re.IGNORECASE | re.DOTALL,
             )
 
             if title_match:
-                title = clean_text(title_match.group(1))
+                title = clean_text(
+                    title_match.group(1)
+                )
 
         return {
             "title": title,
             "description": description,
+            "image_url": image_url,
+            "site_name": site_name,
         }
 
-    except Exception:
+    except Exception as exc:
+        print(
+            f"[MONEY AI] Source fetch failed: {exc}",
+            flush=True,
+        )
+
         return {}
 
 
-def demo_content(topic, source_url=None, source_name=None):
+def demo_content(
+    topic,
+    source_url=None,
+    source_name=None,
+    published_at=None,
+):
     topic = clean_text(topic)
 
     source = fetch_source(source_url)
 
-    real_title = source.get("title") or topic
-    description = source.get("description") or ""
+    real_title = (
+        source.get("title")
+        or topic
+    )
 
-    source_label = source_name or "Source"
+    description = (
+        source.get("description")
+        or ""
+    )
+
+    source_label = (
+        source.get("site_name")
+        or source_name
+        or "Source"
+    )
 
     if description:
         script = (
-            f"Αυτό είναι το θέμα που συζητιέται τώρα: {real_title}. "
+            f"Η είδηση είναι αυτή: {real_title}. "
             f"{description} "
-            "Το σημαντικό εδώ είναι να ξεχωρίσουμε την είδηση "
-            "από τις προβλέψεις και τις υπερβολές. "
-            "Αν αυτή η εξέλιξη συνεχιστεί, το βασικό ερώτημα είναι "
-            "τι σημαίνει στην πράξη για τους ανθρώπους και την αγορά. "
-            "Κράτα την πηγή και έλεγξε τα δεδομένα πριν βγάλεις συμπέρασμα."
+            "Το σημαντικό είναι να ξεχωρίσουμε "
+            "τι έχει επιβεβαιωθεί από το τι αποτελεί "
+            "πρόβλεψη ή σχόλιο. "
+            "Για αυτό αξίζει να κοιτάξεις την αρχική πηγή "
+            "και τα πραγματικά δεδομένα πριν βγάλεις συμπέρασμα."
         )
     else:
         script = (
-            f"Μια νέα εξέλιξη τραβάει την προσοχή: {real_title}. "
+            f"Το θέμα που αξίζει να προσέξεις είναι: "
+            f"{real_title}. "
             f"Η διαθέσιμη πληροφορία από το {source_label} "
-            "δείχνει ότι πρόκειται για θέμα που αξίζει να παρακολουθήσουμε. "
-            "Δεν θα παρουσιάσουμε προβλέψεις ως γεγονότα. "
-            "Το βασικό είναι να δούμε τι έχει επιβεβαιωθεί, "
-            "τι παραμένει άγνωστο και τι μπορεί να αλλάξει στην πράξη. "
-            "Αυτό είναι το σημείο που αξίζει να κρατήσεις."
+            "δείχνει ότι πρόκειται για εξέλιξη που αξίζει "
+            "να παρακολουθήσουμε. "
+            "Το βασικό ερώτημα είναι τι έχει επιβεβαιωθεί "
+            "και τι παραμένει άγνωστο."
         )
 
     return {
-        "hook": f"Αυτό συμβαίνει τώρα — και μπορεί να έχει μεγαλύτερη σημασία απ' όσο φαίνεται.",
+        "hook": (
+            "Αυτή η είδηση τραβάει την προσοχή — "
+            "αλλά το σημαντικό σημείο είναι άλλο."
+        ),
         "script": script,
         "caption": (
             f"{real_title}. "
-            "Τα βασικά σημεία, χωρίς clickbait και χωρίς να παρουσιάζουμε "
-            "εικασίες ως γεγονότα."
+            "Τα βασικά σημεία, με βάση την διαθέσιμη πηγή."
         ),
         "hashtags": [
             "#moneyai",
-            "#ai",
-            "#technology",
-            "#business",
             "#news",
+            "#business",
+            "#technology",
+            "#ai",
             "#explained",
         ],
         "visual_plan": [
-            f"Opening shot με headline: {real_title}",
-            "Γρήγορο zoom στο βασικό σημείο της είδησης",
-            "Source card με το όνομα της πηγής",
-            "Animated text με το σημαντικότερο γεγονός",
-            "Visual που εξηγεί γιατί έχει σημασία",
-            "Σύντομο section: Τι γνωρίζουμε",
-            "Σύντομο section: Τι δεν έχει επιβεβαιωθεί",
-            "Final takeaway με MONEY AI branding",
+            "Opening με το headline της είδησης",
+            "Εμφάνιση της βασικής εικόνας της πηγής",
+            "Zoom στο σημαντικό σημείο",
+            "Source card",
+            "Animated explanation",
+            "What we know",
+            "What remains unknown",
+            "Final takeaway",
         ],
         "source": {
             "url": source_url,
             "name": source_name,
+            "site_name": source_label,
             "title": real_title,
+            "image_url": source.get("image_url"),
+            "description": description,
+            "published_at": published_at,
         },
     }
 
@@ -169,6 +275,8 @@ def generate_content(
     if not topic:
         raise ValueError("Topic is required")
 
+    source_page = fetch_source(source_url)
+
     api_key = os.getenv("OPENAI_API_KEY")
 
     if not api_key:
@@ -176,31 +284,36 @@ def generate_content(
             topic,
             source_url=source_url,
             source_name=source_name,
+            published_at=published_at,
         )
 
     try:
-        client = OpenAI(api_key=api_key)
+        client = OpenAI(
+            api_key=api_key
+        )
 
         source_material = {
             "topic": topic,
             "source_url": source_url,
             "source_name": source_name,
             "published_at": published_at,
+            "source_title": source_page.get(
+                "title"
+            ),
+            "source_description": source_page.get(
+                "description"
+            ),
         }
 
-        source_page = fetch_source(source_url)
-
-        if source_page:
-            source_material["source_title"] = source_page.get("title")
-            source_material["source_description"] = source_page.get(
-                "description"
-            )
-
         response = client.responses.create(
-            model=os.getenv("OPENAI_MODEL", "gpt-6-luna"),
+            model=os.getenv(
+                "OPENAI_MODEL",
+                "gpt-6-luna",
+            ),
             instructions=SYSTEM,
             input=(
-                "Create the video from this source material:\n\n"
+                "Create the video from this "
+                "source material:\n\n"
                 + json.dumps(
                     source_material,
                     ensure_ascii=False,
@@ -210,25 +323,69 @@ def generate_content(
         )
 
         text = response.output_text.strip()
+
         data = json.loads(text)
 
-        data.setdefault("hook", topic)
-        data.setdefault("script", "")
-        data.setdefault("caption", "")
-        data.setdefault("hashtags", [])
-        data.setdefault("visual_plan", [])
+        data.setdefault(
+            "hook",
+            topic,
+        )
+
+        data.setdefault(
+            "script",
+            "",
+        )
+
+        data.setdefault(
+            "caption",
+            "",
+        )
+
+        data.setdefault(
+            "hashtags",
+            [],
+        )
+
+        data.setdefault(
+            "visual_plan",
+            [],
+        )
 
         data["source"] = {
             "url": source_url,
             "name": source_name,
-            "title": topic,
+            "site_name": (
+                source_page.get(
+                    "site_name"
+                )
+                or source_name
+            ),
+            "title": (
+                source_page.get(
+                    "title"
+                )
+                or topic
+            ),
+            "image_url": source_page.get(
+                "image_url"
+            ),
+            "description": source_page.get(
+                "description"
+            ),
+            "published_at": published_at,
         }
 
         return data
 
-    except Exception:
+    except Exception as exc:
+        print(
+            f"[MONEY AI] OpenAI generation failed: {exc}",
+            flush=True,
+        )
+
         return demo_content(
             topic,
             source_url=source_url,
             source_name=source_name,
+            published_at=published_at,
         )
